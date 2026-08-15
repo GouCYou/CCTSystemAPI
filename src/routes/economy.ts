@@ -32,6 +32,86 @@ export async function points(request: Request, env: Env): Promise<Response> {
   return jsonResponse({ ok: true, data: { balance } })
 }
 
+export async function pointsHistory(request: Request, env: Env, url: URL): Promise<Response> {
+  if (request.method !== 'GET') {
+    return apiError(405, 'METHOD_NOT_ALLOWED', 'Method not allowed')
+  }
+  const session = await readSession(request, env)
+  if (session === undefined) {
+    return apiError(401, 'SESSION_INVALID', 'Session is invalid')
+  }
+  const page = boundedInteger(url.searchParams.get('page'), 1, 100_000, 1)
+  const pageSize = boundedInteger(url.searchParams.get('pageSize'), 1, 50, 10)
+  if (page === undefined || pageSize === undefined) {
+    return apiError(400, 'POINTS_HISTORY_REQUEST_INVALID', 'Invalid history request')
+  }
+  const response = await minecraftRpc(env, {
+    capability: 'points.history.read',
+    operation: 'points.history.read',
+    payload: { playerUuid: session.playerUuid, page, pageSize },
+    timeoutMs: 5_000,
+  })
+  const envelope = await readEnvelope(response)
+  if (!response.ok) {
+    return jsonResponse(envelope, { status: response.status })
+  }
+  const filtered = isRecord(envelope.data) ? validatePointsHistory(envelope.data) : undefined
+  return filtered === undefined
+    ? apiError(502, 'POINTS_HISTORY_INVALID', 'Points history is invalid', true)
+    : jsonResponse({ ok: true, data: filtered })
+}
+
+function validatePointsHistory(value: Record<string, unknown>): Record<string, unknown> | undefined {
+  if (!Array.isArray(value.items)
+    || !positiveInteger(value.page)
+    || !positiveInteger(value.pageSize)
+    || !nonNegativeInteger(value.totalItems)
+    || !positiveInteger(value.totalPages)) {
+    return undefined
+  }
+  const items = value.items.map(item => {
+    if (!isRecord(item)
+      || typeof item.operationId !== 'string'
+      || !Number.isSafeInteger(item.deltaPoints)
+      || !(item.balanceAfter === null || Number.isSafeInteger(item.balanceAfter))
+      || typeof item.sourceType !== 'string' || item.sourceType.length > 32
+      || typeof item.sourceReference !== 'string' || item.sourceReference.length > 80
+      || typeof item.createdAt !== 'string') {
+      return undefined
+    }
+    return {
+      operationId: item.operationId,
+      deltaPoints: item.deltaPoints,
+      balanceAfter: item.balanceAfter,
+      sourceType: item.sourceType,
+      sourceReference: item.sourceReference,
+      createdAt: item.createdAt,
+    }
+  })
+  if (items.some(item => item === undefined)) return undefined
+  return {
+    items,
+    page: value.page,
+    pageSize: value.pageSize,
+    totalItems: value.totalItems,
+    totalPages: value.totalPages,
+  }
+}
+
+function boundedInteger(value: string | null, min: number, max: number, fallback: number): number | undefined {
+  if (value === null) return fallback
+  const parsed = Number(value)
+  return Number.isSafeInteger(parsed) && parsed >= min && parsed <= max ? parsed : undefined
+}
+
+function positiveInteger(value: unknown): value is number {
+  return Number.isSafeInteger(value) && (value as number) > 0
+}
+
+function nonNegativeInteger(value: unknown): value is number {
+  return Number.isSafeInteger(value) && (value as number) >= 0
+}
+
 export async function exchangeQuote(request: Request, env: Env, url: URL): Promise<Response> {
   if (request.method !== 'GET') {
     return apiError(405, 'METHOD_NOT_ALLOWED', 'Method not allowed')

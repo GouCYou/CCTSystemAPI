@@ -10,5 +10,6 @@ export interface Env {
   MEMBERSHIP_SERVER_ID: string
   REDEEM_SERVER_ID: string
   SKIN_SERVER_ID: string
+  PROFILE_SERVER_ID: string
   SESSION_TTL_SECONDS?: string
 }

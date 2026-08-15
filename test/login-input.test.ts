@@ -20,4 +20,18 @@ describe('login input', () => {
     })
     expect(await readLoginInput(request)).toBeUndefined()
   })
+
+  it('accepts a canonical player UUID', async () => {
+    const request = new Request('https://api.example.test/api/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({
+        username: 'f84c6a79-2b0f-4f8c-ae37-4f81d0a59eb4',
+        password: 'value',
+      }),
+    })
+    expect(await readLoginInput(request)).toEqual({
+      username: 'f84c6a79-2b0f-4f8c-ae37-4f81d0a59eb4',
+      password: 'value',
+    })
+  })
 })

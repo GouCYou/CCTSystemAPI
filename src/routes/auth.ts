@@ -16,6 +16,7 @@ import { readSession } from '../security/session'
 
 const LOGIN_BODY_LIMIT = 4_096
 const PLAYER_NAME = /^[A-Za-z0-9_]{3,16}$/
+const PLAYER_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
 interface LoginInput {
   username: string
@@ -116,11 +117,16 @@ export async function me(request: Request, env: Env): Promise<Response> {
   if (data === undefined) {
     return apiError(401, 'SESSION_INVALID', 'Session is invalid')
   }
+  const liveProfile = await readLiveProfile(env, data.playerUuid)
   return jsonResponse({
     ok: true,
     data: {
       authenticated: true,
+      playerUuid: data.playerUuid,
       displayName: data.displayName,
+      online: liveProfile?.online ?? false,
+      primaryGroup: liveProfile?.primaryGroup ?? 'default',
+      title: liveProfile?.title ?? null,
       expiresAt: new Date(data.expiresAt).toISOString(),
     },
   })
@@ -140,12 +146,52 @@ export async function readLoginInput(request: Request): Promise<LoginInput | und
     if (!isRecord(value)
       || typeof value.username !== 'string'
       || typeof value.password !== 'string'
-      || !PLAYER_NAME.test(value.username)
+      || !(PLAYER_NAME.test(value.username) || PLAYER_UUID.test(value.username))
       || value.password.length < 1
       || value.password.length > 256) {
       return undefined
     }
     return { username: value.username, password: value.password }
+  } catch {
+    return undefined
+  }
+}
+
+async function readLiveProfile(
+  env: Env,
+  playerUuid: string,
+): Promise<{ online: boolean; primaryGroup: string; title: string | null } | undefined> {
+  try {
+    const bridge = env.BRIDGE_COORDINATOR.getByName(env.CCT_NETWORK_ID)
+    const response = await bridge.fetch(new Request('https://bridge.internal/rpc', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        capability: 'profile.read',
+        operation: 'profile.read',
+        serverId: env.PROFILE_SERVER_ID,
+        payload: { playerUuid },
+        timeoutMs: 4_000,
+      }),
+    }))
+    if (!response.ok) {
+      return undefined
+    }
+    const envelope = await readJsonRecord(response)
+    const profile = recordField(envelope, 'data')
+    if (profile === undefined
+      || typeof profile.online !== 'boolean'
+      || typeof profile.primaryGroup !== 'string'
+      || profile.primaryGroup.length < 1 || profile.primaryGroup.length > 64
+      || !(profile.title === null
+        || (typeof profile.title === 'string' && profile.title.length <= 128))) {
+      return undefined
+    }
+    return {
+      online: profile.online,
+      primaryGroup: profile.primaryGroup,
+      title: profile.title as string | null,
+    }
   } catch {
     return undefined
   }
@@ -190,5 +236,5 @@ function nestedString(value: Record<string, unknown>, objectKey: string, fieldKe
 }
 
 function isUuid(value: string): boolean {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
+  return PLAYER_UUID.test(value)
 }

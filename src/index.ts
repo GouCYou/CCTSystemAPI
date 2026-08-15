@@ -6,7 +6,7 @@ import { applyCors, preflight, validateApiOrigin } from './http/cors'
 import { apiError, jsonResponse } from './http/json'
 import { login, logout, me } from './routes/auth'
 import { avatar } from './routes/avatar'
-import { exchangeQuote, executeExchange, points } from './routes/economy'
+import { exchangeQuote, executeExchange, points, pointsHistory } from './routes/economy'
 import {
   membershipCatalog,
   membershipQuote,
@@ -15,6 +15,7 @@ import {
 } from './routes/membership'
 import { redeem } from './routes/redeem'
 import { serverStatus } from './routes/servers'
+import { accountSecurity, changePassword, emailUnavailable } from './routes/security'
 import {
   authenticateBridgeUpgrade,
   BridgeAuthenticationError,
@@ -62,11 +63,24 @@ async function routeApi(request: Request, env: Env, url: URL): Promise<Response>
     if (url.pathname === '/api/me/points') {
       return points(request, env)
     }
+    if (url.pathname === '/api/me/points/history') {
+      return pointsHistory(request, env, url)
+    }
     if (url.pathname === '/api/me/exchange') {
       return exchangeQuote(request, env, url)
     }
     if (url.pathname === '/api/me/membership') {
       return membershipSummary(request, env)
+    }
+    if (url.pathname === '/api/me/security') {
+      return accountSecurity(request, env)
+    }
+    if (url.pathname === '/api/me/security/password') {
+      return changePassword(request, env)
+    }
+    if (url.pathname === '/api/me/security/email/code'
+      || url.pathname === '/api/me/security/email') {
+      return emailUnavailable()
     }
     if (url.pathname === '/api/catalog/memberships') {
       return membershipCatalog(request, env)

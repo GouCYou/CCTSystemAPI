@@ -1,0 +1,6 @@
+# Copy to .dev.vars for local development. Never commit real node secrets.
+NODE_KEYS_JSON={"velocity-1":"replace-with-at-least-32-random-characters"}
+AUTH_RATE_LIMIT_SALT=replace-with-at-least-32-random-characters
+CCT_ALLOWED_ORIGINS=http://localhost:4321,https://cctstudio.cn,https://www.cctstudio.cn
+EXCHANGE_SOURCE_SERVERS_JSON={"survival_coins":"survival"}
+MEMBERSHIP_SERVER_ID=lobby

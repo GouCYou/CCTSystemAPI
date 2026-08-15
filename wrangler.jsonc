@@ -1,0 +1,49 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "cctsystem-api",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-14",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": {
+    "enabled": true
+  },
+  "vars": {
+    "CCT_NETWORK_ID": "cct-main",
+    "CCT_ALLOWED_ORIGINS": "https://cctstudio.cn,https://www.cctstudio.cn",
+    "EXCHANGE_SOURCE_SERVERS_JSON": "{\"survival_coins\":\"survival\"}",
+    "MEMBERSHIP_SERVER_ID": "lobby",
+    "REDEEM_SERVER_ID": "lobby",
+    "SKIN_SERVER_ID": "proxy",
+    "SESSION_TTL_SECONDS": "604800"
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "BRIDGE_COORDINATOR",
+        "class_name": "BridgeCoordinator"
+      },
+      {
+        "name": "SESSIONS",
+        "class_name": "SessionObject"
+      },
+      {
+        "name": "AUTH_RATE_LIMIT",
+        "class_name": "AuthRateLimitObject"
+      }
+    ]
+  },
+  "exports": {
+    "BridgeCoordinator": {
+      "type": "durable-object",
+      "storage": "sqlite"
+    },
+    "SessionObject": {
+      "type": "durable-object",
+      "storage": "sqlite"
+    },
+    "AuthRateLimitObject": {
+      "type": "durable-object",
+      "storage": "sqlite"
+    }
+  }
+}

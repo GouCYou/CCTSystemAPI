@@ -115,18 +115,45 @@ async function locateIp(value: string, request: Request): Promise<string | null>
   const ip = normalizeIp(value)
   if (ip === undefined || isPrivateIp(ip)) return null
   const currentIp = normalizeIp(request.headers.get('CF-Connecting-IP') ?? '')
-  if (currentIp === ip) {
+  if (currentIp === ip && !isChinaRequest(request.cf)) {
     const location = cloudflareLocation(request.cf)
     if (location !== null) return location
   }
 
   // Only an anonymized network address is sent to lookup providers.
   const lookupIp = anonymizeIp(ip)
-  const [primary, fallback] = await Promise.all([
+  const [china, primary, fallback] = await Promise.all([
+    lookupBaidu(lookupIp),
     lookupIpWho(lookupIp),
     lookupIpSb(lookupIp),
   ])
-  return primary ?? fallback
+  return china ?? primary ?? fallback
+}
+
+async function lookupBaidu(ip: string): Promise<string | null> {
+  try {
+    const url = new URL('https://opendata.baidu.com/api.php')
+    url.search = new URLSearchParams({
+      query: ip,
+      co: '',
+      resource_id: '6006',
+      oe: 'utf8',
+    }).toString()
+    const response = await fetch(url, {
+      headers: { accept: 'application/json', 'user-agent': 'CCTSystemAPI/1.0' },
+      signal: AbortSignal.timeout(2_000),
+      cf: { cacheEverything: true, cacheTtl: 86_400 },
+    })
+    if (!response.ok) return null
+    const value: unknown = await response.json()
+    if (!isRecord(value) || value.status !== '0' || !Array.isArray(value.data)) return null
+    const first = value.data[0]
+    return isRecord(first) && typeof first.location === 'string'
+      ? parseChinaLocation(first.location)
+      : null
+  } catch {
+    return null
+  }
 }
 
 async function lookupIpWho(ip: string): Promise<string | null> {
@@ -167,6 +194,28 @@ function cloudflareLocation(cf: unknown): string | null {
   if (!isRecord(cf)) return null
   const country = cf.country === 'CN' ? '中国' : cf.country
   return locationParts(country, cf.region, cf.city)
+}
+
+function isChinaRequest(cf: unknown): boolean {
+  return isRecord(cf) && cf.country === 'CN'
+}
+
+export function parseChinaLocation(value: string): string | null {
+  const location = value.trim().split(/\s+/)[0] ?? ''
+  if (location.length === 0) return null
+  const direct = /^(北京市|上海市|天津市|重庆市)/.exec(location)?.[1]
+  if (direct !== undefined) {
+    const district = location.slice(direct.length).match(/^(.+?(?:区|县))/)?.[1]
+    return locationParts('中国', direct, district)
+  }
+  const province = /^(.+?(?:省|自治区|特别行政区))/.exec(location)?.[1]
+  if (province === undefined) return locationParts('中国', location)
+  const remainder = location.slice(province.length)
+  const city = /^(.+?(?:市|自治州|地区|盟))/.exec(remainder)?.[1]
+  const district = city === undefined
+    ? undefined
+    : remainder.slice(city.length).match(/^(.+?(?:区|县))/)?.[1]
+  return locationParts('中国', province, city, district)
 }
 
 function locationParts(...values: unknown[]): string | null {

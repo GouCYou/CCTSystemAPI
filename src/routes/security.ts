@@ -25,7 +25,7 @@ export async function accountSecurity(request: Request, env: Env): Promise<Respo
     return apiError(502, 'ACCOUNT_SECURITY_INVALID', 'Account service returned an invalid response', true)
   }
   const lastLoginLocation = typeof data.lastLoginIp === 'string'
-    ? await locateIp(data.lastLoginIp)
+    ? await locateIp(data.lastLoginIp, request)
     : null
   return jsonResponse({
     ok: true,
@@ -111,32 +111,116 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-async function locateIp(ip: string): Promise<string | null> {
-  if (!looksLikeIp(ip) || isPrivateIp(ip)) return null
+async function locateIp(value: string, request: Request): Promise<string | null> {
+  const ip = normalizeIp(value)
+  if (ip === undefined || isPrivateIp(ip)) return null
+  const currentIp = normalizeIp(request.headers.get('CF-Connecting-IP') ?? '')
+  if (currentIp === ip) {
+    const location = cloudflareLocation(request.cf)
+    if (location !== null) return location
+  }
+
+  // Only an anonymized network address is sent to lookup providers.
+  const lookupIp = anonymizeIp(ip)
+  const [primary, fallback] = await Promise.all([
+    lookupIpWho(lookupIp),
+    lookupIpSb(lookupIp),
+  ])
+  return primary ?? fallback
+}
+
+async function lookupIpWho(ip: string): Promise<string | null> {
   try {
     const response = await fetch(`https://ipwho.is/${encodeURIComponent(ip)}?lang=zh-CN`, {
-      headers: { accept: 'application/json' },
+      headers: { accept: 'application/json', 'user-agent': 'CCTSystemAPI/1.0' },
+      signal: AbortSignal.timeout(2_000),
       cf: { cacheEverything: true, cacheTtl: 86_400 },
     })
     if (!response.ok) return null
     const value: unknown = await response.json()
-    if (!isRecord(value) || value.success !== true) return null
-    const parts = [value.country, value.region, value.city]
-      .filter((part): part is string => typeof part === 'string' && part.length > 0)
-      .filter((part, index, all) => all.indexOf(part) === index)
-    return parts.length > 0 ? parts.join(' · ') : null
+    return isRecord(value) && value.success === true
+      ? locationParts(value.country, value.region, value.city)
+      : null
   } catch {
     return null
   }
 }
 
-function looksLikeIp(value: string): boolean {
-  return /^[0-9a-fA-F:.]{3,64}$/.test(value)
+async function lookupIpSb(ip: string): Promise<string | null> {
+  try {
+    const response = await fetch(`https://api.ip.sb/geoip/${encodeURIComponent(ip)}`, {
+      headers: { accept: 'application/json', 'user-agent': 'CCTSystemAPI/1.0' },
+      signal: AbortSignal.timeout(2_000),
+      cf: { cacheEverything: true, cacheTtl: 86_400 },
+    })
+    if (!response.ok) return null
+    const value: unknown = await response.json()
+    if (!isRecord(value)) return null
+    const country = value.country_code === 'CN' ? '中国' : value.country
+    return locationParts(country, value.region, value.city)
+  } catch {
+    return null
+  }
+}
+
+function cloudflareLocation(cf: unknown): string | null {
+  if (!isRecord(cf)) return null
+  const country = cf.country === 'CN' ? '中国' : cf.country
+  return locationParts(country, cf.region, cf.city)
+}
+
+function locationParts(...values: unknown[]): string | null {
+  const parts = values
+    .filter((part): part is string => typeof part === 'string' && part.trim().length > 0)
+    .map(part => part.trim())
+    .filter((part, index, all) => all.indexOf(part) === index)
+  return parts.length > 0 ? parts.join(' · ') : null
+}
+
+export function normalizeIp(value: string): string | undefined {
+  let candidate = value.trim().replace(/^\//, '')
+  const bracketed = /^\[([^\]]+)](?::\d+)?$/.exec(candidate)
+  if (bracketed !== null) candidate = bracketed[1] ?? candidate
+  const ipv4WithPort = /^(\d{1,3}(?:\.\d{1,3}){3}):\d+$/.exec(candidate)
+  if (ipv4WithPort !== null) candidate = ipv4WithPort[1] ?? candidate
+  if (candidate.toLowerCase().startsWith('::ffff:')) candidate = candidate.slice(7)
+  if (isIpv4(candidate)) return candidate
+  const expanded = expandIpv6(candidate)
+  return expanded === undefined ? undefined : expanded.join(':')
+}
+
+export function anonymizeIp(ip: string): string {
+  if (isIpv4(ip)) return `${ip.split('.').slice(0, 3).join('.')}.0`
+  const expanded = expandIpv6(ip)
+  return expanded === undefined ? ip : `${expanded.slice(0, 4).join(':')}::`
+}
+
+function isIpv4(value: string): boolean {
+  const parts = value.split('.')
+  return parts.length === 4 && parts.every(part => /^\d{1,3}$/.test(part) && Number(part) <= 255)
+}
+
+function expandIpv6(value: string): string[] | undefined {
+  const candidate = value.toLowerCase().split('%')[0] ?? ''
+  if (!candidate.includes(':') || !/^[0-9a-f:]+$/.test(candidate)) return undefined
+  const halves = candidate.split('::')
+  if (halves.length > 2) return undefined
+  const first = halves[0] ?? ''
+  const second = halves[1] ?? ''
+  const left = first === '' ? [] : first.split(':')
+  const right = halves.length === 1 || second === '' ? [] : second.split(':')
+  if ([...left, ...right].some(part => part.length < 1 || part.length > 4)) return undefined
+  const missing = 8 - left.length - right.length
+  if ((halves.length === 1 && missing !== 0) || (halves.length === 2 && missing < 1)) return undefined
+  return [...left, ...Array.from({ length: missing }, () => '0'), ...right]
+    .map(part => part.padStart(4, '0'))
 }
 
 function isPrivateIp(value: string): boolean {
   const normalized = value.toLowerCase()
   return normalized === '::1'
+    || normalized === '0000:0000:0000:0000:0000:0000:0000:0001'
+    || normalized === '0000:0000:0000:0000:0000:0000:0000:0000'
     || normalized.startsWith('fe80:')
     || normalized.startsWith('fc')
     || normalized.startsWith('fd')

@@ -285,12 +285,15 @@ export class BridgeCoordinator {
 
   private sendNodeCallResponse(
     webSocket: WebSocket,
-    attachment: SocketAttachment,
+    _attachment: SocketAttachment,
     requestId: string,
     payload: unknown,
     error: { code: string, message: string, retryable: boolean } | null,
   ): void {
     if (webSocket.readyState !== WebSocket.OPEN) return
+    // Responses complete asynchronously and may arrive out of order. Always re-read the
+    // latest attachment so concurrent calls cannot reuse the same outbound sequence.
+    const attachment = this.attachment(webSocket)
     attachment.nextOutboundSequence += 1
     webSocket.serializeAttachment(attachment)
     webSocket.send(JSON.stringify({

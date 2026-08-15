@@ -7,6 +7,9 @@
   "observability": {
     "enabled": true
   },
+  "secrets": {
+    "required": ["NODE_KEYS_JSON", "AUTH_RATE_LIMIT_SALT"]
+  },
   "vars": {
     "CCT_NETWORK_ID": "cct-main",
     "CCT_ALLOWED_ORIGINS": "https://cctstudio.cn,https://www.cctstudio.cn",

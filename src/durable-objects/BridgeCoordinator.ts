@@ -104,6 +104,11 @@ export class BridgeCoordinator {
       webSocket.serializeAttachment(attachment)
       return
     }
+    if (value.kind === 'call') {
+      webSocket.serializeAttachment(attachment)
+      void this.handleNodeCall(webSocket, attachment, value)
+      return
+    }
     webSocket.close(1003, 'unsupported frame')
   }
 
@@ -199,6 +204,104 @@ export class BridgeCoordinator {
       typeof error.message === 'string' ? error.message : 'Minecraft request failed',
       error.retryable === true,
     ))
+  }
+
+  private async handleNodeCall(
+    sourceSocket: WebSocket,
+    source: SocketAttachment,
+    frame: Record<string, unknown>,
+  ): Promise<void> {
+    const requestId = frame.requestId
+    const capability = frame.capability
+    const operation = frame.operation
+    const deadline = frame.deadline
+    const idempotencyKey = frame.idempotencyKey
+    if (typeof requestId !== 'string' || requestId.length > 64
+      || typeof capability !== 'string' || typeof operation !== 'string'
+      || typeof deadline !== 'string'
+      || (idempotencyKey !== null && idempotencyKey !== undefined
+        && typeof idempotencyKey !== 'string')) {
+      this.sendNodeCallError(sourceSocket, source, typeof requestId === 'string' ? requestId : '', {
+        code: 'REQUEST_INVALID',
+        message: 'Invalid node RPC request',
+        retryable: false,
+      })
+      return
+    }
+    if (!isAllowedNodeCall(capability, operation)) {
+      this.sendNodeCallError(sourceSocket, source, requestId, {
+        code: 'CAPABILITY_NOT_ALLOWED',
+        message: 'Node RPC operation is not allowed',
+        retryable: false,
+      })
+      return
+    }
+    const deadlineAt = Date.parse(deadline)
+    if (!Number.isFinite(deadlineAt) || deadlineAt <= Date.now()) {
+      this.sendNodeCallError(sourceSocket, source, requestId, {
+        code: 'REQUEST_EXPIRED',
+        message: 'Node RPC request has expired',
+        retryable: true,
+      })
+      return
+    }
+
+    const timeoutMs = Math.min(Math.max(deadlineAt - Date.now(), 500), 15_000)
+    const forwarded = await this.rpc(new Request('https://bridge.internal/rpc', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        capability,
+        operation,
+        payload: frame.payload ?? null,
+        idempotencyKey: idempotencyKey ?? undefined,
+        timeoutMs,
+      }),
+    }))
+    const body = await forwarded.json().catch(() => ({})) as {
+      ok?: boolean
+      data?: unknown
+      error?: { code?: string, message?: string, retryable?: boolean }
+    }
+    if (body.ok === true) {
+      this.sendNodeCallResponse(sourceSocket, source, requestId, body.data ?? null, null)
+      return
+    }
+    this.sendNodeCallError(sourceSocket, source, requestId, {
+      code: body.error?.code ?? 'BRIDGE_REQUEST_FAILED',
+      message: body.error?.message ?? 'Minecraft request failed',
+      retryable: body.error?.retryable === true || forwarded.status >= 500,
+    })
+  }
+
+  private sendNodeCallError(
+    webSocket: WebSocket,
+    attachment: SocketAttachment,
+    requestId: string,
+    error: { code: string, message: string, retryable: boolean },
+  ): void {
+    this.sendNodeCallResponse(webSocket, attachment, requestId, null, error)
+  }
+
+  private sendNodeCallResponse(
+    webSocket: WebSocket,
+    attachment: SocketAttachment,
+    requestId: string,
+    payload: unknown,
+    error: { code: string, message: string, retryable: boolean } | null,
+  ): void {
+    if (webSocket.readyState !== WebSocket.OPEN) return
+    attachment.nextOutboundSequence += 1
+    webSocket.serializeAttachment(attachment)
+    webSocket.send(JSON.stringify({
+      version: PROTOCOL_VERSION,
+      kind: 'response',
+      requestId,
+      sequence: attachment.nextOutboundSequence,
+      ok: error === null,
+      payload,
+      error,
+    }))
   }
 
   private status(): Response {
@@ -331,4 +434,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every(item => typeof item === 'string')
+}
+
+function isAllowedNodeCall(capability: string, operation: string): boolean {
+  return (capability === 'membership.read'
+      && ['membership.catalog', 'membership.summary', 'membership.quote'].includes(operation))
+    || (capability === 'membership.mutate' && operation === 'membership.purchase')
 }

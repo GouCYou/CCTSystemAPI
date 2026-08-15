@@ -13,7 +13,7 @@ npm run build
 
 ## 首次部署
 
-在 `.dev.vars.production` 中填写 `NODE_KEYS_JSON`、`AUTH_RATE_LIMIT_SALT` 和支付 FM 的三个 Secret，然后执行：
+在 `.dev.vars.production` 中填写 `NODE_KEYS_JSON` 和 `AUTH_RATE_LIMIT_SALT`，然后执行：
 
 ```bash
 npm ci
@@ -26,7 +26,7 @@ npx wrangler deploy --secrets-file .dev.vars.production
 
 ## 支付 FM
 
-生产环境 Secret 不写入 Git：
+开启支付前再配置下面三个生产环境 Secret，不写入 Git：
 
 ```dotenv
 ZHIFUX_API_BASE=https://支付FM后台显示的接口根地址

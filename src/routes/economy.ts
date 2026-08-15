@@ -134,6 +134,42 @@ export async function exchangeQuote(request: Request, env: Env, url: URL): Promi
   return filterBridgeData(response, validateQuote)
 }
 
+export async function exchangeQuotes(request: Request, env: Env): Promise<Response> {
+  if (request.method !== 'GET') {
+    return apiError(405, 'METHOD_NOT_ALLOWED', 'Method not allowed')
+  }
+  const session = await readSession(request, env)
+  if (session === undefined) {
+    return apiError(401, 'SESSION_INVALID', 'Session is invalid')
+  }
+  const sources = Object.entries(sourceServers(env))
+    .filter(([sourceId, serverId]) => SOURCE_ID.test(sourceId) && SOURCE_ID.test(serverId))
+    .map(([sourceId, serverId]) => ({ sourceId, serverId }))
+  if (sources.length === 0) {
+    return apiError(503, 'EXCHANGE_SOURCE_UNAVAILABLE', 'No exchange source is configured', true)
+  }
+  const results = await Promise.all(sources.map(async source => {
+    try {
+      const response = await minecraftRpc(env, {
+        capability: 'exchange.execute',
+        operation: 'exchange.quote',
+        serverId: source.serverId,
+        payload: { playerUuid: session.playerUuid, sourceId: source.sourceId },
+        timeoutMs: 5_000,
+      })
+      const envelope = await readEnvelope(response)
+      const data = recordField(envelope, 'data')
+      return response.ok && data !== undefined ? validateQuote(data) : undefined
+    } catch {
+      return undefined
+    }
+  }))
+  const available = results.filter((quote): quote is Record<string, unknown> => quote !== undefined)
+  return available.length === 0
+    ? apiError(503, 'EXCHANGE_SOURCE_UNAVAILABLE', 'Exchange sources are unavailable', true)
+    : jsonResponse({ ok: true, data: available })
+}
+
 export async function executeExchange(request: Request, env: Env): Promise<Response> {
   if (request.method !== 'POST') {
     return apiError(405, 'METHOD_NOT_ALLOWED', 'Method not allowed')

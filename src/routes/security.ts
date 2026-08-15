@@ -16,11 +16,28 @@ export async function accountSecurity(request: Request, env: Env): Promise<Respo
   const envelope = await readEnvelope(response)
   if (!response.ok) return jsonResponse(envelope, { status: response.status })
   const data = isRecord(envelope.data) ? envelope.data : undefined
-  if (data === undefined || !(data.email === null
-    || (typeof data.email === 'string' && data.email.length <= 254))) {
+  if (data === undefined
+    || !(data.email === null || (typeof data.email === 'string' && data.email.length <= 254))
+    || typeof data.registeredAt !== 'string'
+    || !(data.lastLoginAt === null || typeof data.lastLoginAt === 'string')
+    || !(data.lastLoginIp === null || (typeof data.lastLoginIp === 'string' && data.lastLoginIp.length <= 64))
+    || typeof data.qqBound !== 'boolean') {
     return apiError(502, 'ACCOUNT_SECURITY_INVALID', 'Account service returned an invalid response', true)
   }
-  return jsonResponse({ ok: true, data: { email: data.email } })
+  const lastLoginLocation = typeof data.lastLoginIp === 'string'
+    ? await locateIp(data.lastLoginIp)
+    : null
+  return jsonResponse({
+    ok: true,
+    data: {
+      email: data.email,
+      registeredAt: data.registeredAt,
+      lastLoginAt: data.lastLoginAt,
+      lastLoginIp: data.lastLoginIp,
+      lastLoginLocation,
+      qqBound: data.qqBound,
+    },
+  })
 }
 
 export async function changePassword(request: Request, env: Env): Promise<Response> {
@@ -92,4 +109,39 @@ async function readEnvelope(response: Response): Promise<Record<string, unknown>
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+async function locateIp(ip: string): Promise<string | null> {
+  if (!looksLikeIp(ip) || isPrivateIp(ip)) return null
+  try {
+    const response = await fetch(`https://ipwho.is/${encodeURIComponent(ip)}?lang=zh-CN`, {
+      headers: { accept: 'application/json' },
+      cf: { cacheEverything: true, cacheTtl: 86_400 },
+    })
+    if (!response.ok) return null
+    const value: unknown = await response.json()
+    if (!isRecord(value) || value.success !== true) return null
+    const parts = [value.country, value.region, value.city]
+      .filter((part): part is string => typeof part === 'string' && part.length > 0)
+      .filter((part, index, all) => all.indexOf(part) === index)
+    return parts.length > 0 ? parts.join(' · ') : null
+  } catch {
+    return null
+  }
+}
+
+function looksLikeIp(value: string): boolean {
+  return /^[0-9a-fA-F:.]{3,64}$/.test(value)
+}
+
+function isPrivateIp(value: string): boolean {
+  const normalized = value.toLowerCase()
+  return normalized === '::1'
+    || normalized.startsWith('fe80:')
+    || normalized.startsWith('fc')
+    || normalized.startsWith('fd')
+    || normalized.startsWith('127.')
+    || normalized.startsWith('10.')
+    || normalized.startsWith('192.168.')
+    || /^172\.(1[6-9]|2\d|3[01])\./.test(normalized)
 }

@@ -6,7 +6,7 @@ import { applyCors, preflight, validateApiOrigin } from './http/cors'
 import { apiError, jsonResponse } from './http/json'
 import { login, logout, me } from './routes/auth'
 import { avatar } from './routes/avatar'
-import { exchangeQuote, executeExchange, points, pointsHistory } from './routes/economy'
+import { exchangeQuote, exchangeQuotes, executeExchange, points, pointsHistory } from './routes/economy'
 import {
   membershipCatalog,
   membershipQuote,
@@ -68,6 +68,9 @@ async function routeApi(request: Request, env: Env, url: URL): Promise<Response>
     }
     if (url.pathname === '/api/me/exchange') {
       return exchangeQuote(request, env, url)
+    }
+    if (url.pathname === '/api/me/exchange/sources') {
+      return exchangeQuotes(request, env)
     }
     if (url.pathname === '/api/me/membership') {
       return membershipSummary(request, env)

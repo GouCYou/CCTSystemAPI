@@ -4,6 +4,12 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-08-14",
   "compatibility_flags": ["nodejs_compat"],
+  "routes": [
+    {
+      "pattern": "api.cctstudio.cn",
+      "custom_domain": true
+    }
+  ],
   "observability": {
     "enabled": true
   },

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { anonymizeIp, normalizeIp, parseChinaLocation } from '../src/routes/security'
+import { anonymizeIp, localizedLocation, normalizeIp, parseChinaLocation } from '../src/routes/security'
 
 describe('IP location input', () => {
   it('normalizes common AuthMe address formats', () => {
@@ -23,5 +23,12 @@ describe('IP location input', () => {
     expect(parseChinaLocation('广东省广州市 联通')).toBe('中国 · 广东省 · 广州市')
     expect(parseChinaLocation('广东省广州市海珠区 联通')).toBe('中国 · 广东省 · 广州市 · 海珠区')
     expect(parseChinaLocation('北京市海淀区 电信')).toBe('中国 · 北京市 · 海淀区')
+  })
+
+  it('localizes English IPv6 provider subdivisions for China', () => {
+    expect(localizedLocation('CN', 'China', 'Guangdong', 'Guangzhou'))
+      .toBe('中国 · 广东省 · 广州市')
+    expect(localizedLocation('CN', '中国', '广东省', '广州'))
+      .toBe('中国 · 广东省 · 广州市')
   })
 })

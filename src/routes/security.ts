@@ -158,7 +158,12 @@ async function lookupBaidu(ip: string): Promise<string | null> {
 
 async function lookupIpWho(ip: string): Promise<string | null> {
   try {
-    const response = await fetch(`https://ipwho.is/${encodeURIComponent(ip)}?lang=zh-CN`, {
+    const url = new URL(`https://ipwho.is/${encodeURIComponent(ip)}`)
+    url.search = new URLSearchParams({
+      lang: 'zh-CN',
+      fields: 'success,country,country_code,region,region_code,city',
+    }).toString()
+    const response = await fetch(url, {
       headers: { accept: 'application/json', 'user-agent': 'CCTSystemAPI/1.0' },
       signal: AbortSignal.timeout(2_000),
       cf: { cacheEverything: true, cacheTtl: 86_400 },
@@ -166,7 +171,7 @@ async function lookupIpWho(ip: string): Promise<string | null> {
     if (!response.ok) return null
     const value: unknown = await response.json()
     return isRecord(value) && value.success === true
-      ? locationParts(value.country, value.region, value.city)
+      ? localizedLocation(value.country_code, value.country, value.region, value.city)
       : null
   } catch {
     return null
@@ -183,8 +188,7 @@ async function lookupIpSb(ip: string): Promise<string | null> {
     if (!response.ok) return null
     const value: unknown = await response.json()
     if (!isRecord(value)) return null
-    const country = value.country_code === 'CN' ? '中国' : value.country
-    return locationParts(country, value.region, value.city)
+    return localizedLocation(value.country_code, value.country, value.region, value.city)
   } catch {
     return null
   }
@@ -192,8 +196,7 @@ async function lookupIpSb(ip: string): Promise<string | null> {
 
 function cloudflareLocation(cf: unknown): string | null {
   if (!isRecord(cf)) return null
-  const country = cf.country === 'CN' ? '中国' : cf.country
-  return locationParts(country, cf.region, cf.city)
+  return localizedLocation(cf.country, cf.country, cf.region, cf.city)
 }
 
 function isChinaRequest(cf: unknown): boolean {
@@ -216,6 +219,63 @@ export function parseChinaLocation(value: string): string | null {
     ? undefined
     : remainder.slice(city.length).match(/^(.+?(?:区|县))/)?.[1]
   return locationParts('中国', province, city, district)
+}
+
+const CHINA_REGIONS: Record<string, string> = {
+  anhui: '安徽省', beijing: '北京市', chongqing: '重庆市', fujian: '福建省', gansu: '甘肃省',
+  guangdong: '广东省', guangxi: '广西壮族自治区', guizhou: '贵州省', hainan: '海南省', hebei: '河北省',
+  heilongjiang: '黑龙江省', henan: '河南省', hongkong: '香港特别行政区', 'hong kong': '香港特别行政区',
+  hubei: '湖北省', hunan: '湖南省', 'inner mongolia': '内蒙古自治区', jiangsu: '江苏省', jiangxi: '江西省',
+  jilin: '吉林省', liaoning: '辽宁省', macao: '澳门特别行政区', macau: '澳门特别行政区', ningxia: '宁夏回族自治区',
+  qinghai: '青海省', shaanxi: '陕西省', shandong: '山东省', shanghai: '上海市', shanxi: '山西省',
+  sichuan: '四川省', taiwan: '台湾省', tianjin: '天津市', tibet: '西藏自治区', xinjiang: '新疆维吾尔自治区',
+  yunnan: '云南省', zhejiang: '浙江省',
+}
+
+const CHINA_CITIES: Record<string, string> = {
+  beijing: '北京市', changchun: '长春市', changsha: '长沙市', chengdu: '成都市', chongqing: '重庆市',
+  dalian: '大连市', dongguan: '东莞市', foshan: '佛山市', fuzhou: '福州市', guangzhou: '广州市',
+  guiyang: '贵阳市', haikou: '海口市', hangzhou: '杭州市', harbin: '哈尔滨市', hefei: '合肥市',
+  hohhot: '呼和浩特市', hongkong: '香港特别行政区', 'hong kong': '香港特别行政区', jinan: '济南市',
+  kunming: '昆明市', lanzhou: '兰州市', lhasa: '拉萨市', macao: '澳门特别行政区', macau: '澳门特别行政区',
+  nanchang: '南昌市', nanjing: '南京市', nanning: '南宁市', ningbo: '宁波市', qingdao: '青岛市',
+  shanghai: '上海市', shenyang: '沈阳市', shenzhen: '深圳市', shijiazhuang: '石家庄市', suzhou: '苏州市',
+  taiyuan: '太原市', tianjin: '天津市', urumqi: '乌鲁木齐市', wuhan: '武汉市', wuxi: '无锡市',
+  xiamen: '厦门市', xian: '西安市', "xi'an": '西安市', xining: '西宁市', yinchuan: '银川市',
+  zhengzhou: '郑州市', zhuhai: '珠海市',
+}
+
+export function localizedLocation(
+  countryCode: unknown,
+  country: unknown,
+  region: unknown,
+  city: unknown,
+): string | null {
+  if (countryCode !== 'CN' && country !== '中国' && country !== 'China') {
+    return locationParts(country, region, city)
+  }
+  return locationParts(
+    '中国',
+    localizeChinaPart(region, CHINA_REGIONS, '省'),
+    localizeChinaPart(city, CHINA_CITIES, '市'),
+  )
+}
+
+function localizeChinaPart(
+  value: unknown,
+  translations: Record<string, string>,
+  suffix: string,
+): string | undefined {
+  if (typeof value !== 'string' || value.trim().length === 0) return undefined
+  const part = value.trim()
+  const key = part.toLowerCase().replace(/\s+(?:province|city)$/i, '')
+  const translated = translations[key]
+  if (translated !== undefined) return translated
+  if (/^[\u3400-\u9fff]+$/.test(part)) {
+    return /(?:省|市|自治区|特别行政区)$/.test(part) ? part : `${part}${suffix}`
+  }
+  // Avoid mixing an untranslated English subdivision into a Chinese address.
+  return undefined
 }
 
 function locationParts(...values: unknown[]): string | null {

@@ -6,6 +6,7 @@ import { consumeMutationLimit } from '../security/mutation-rate-limit'
 const IDEMPOTENCY_KEY = /^[A-Za-z0-9._:-]{8,80}$/
 const TIER_KEY = /^[a-z0-9][a-z0-9_-]{1,63}$/
 const UPGRADE_MODES = new Set(['NONE', 'PAUSE', 'CREDIT'])
+const PUBLIC_PRICING_PLAYER_UUID = '00000000-0000-0000-0000-000000000000'
 
 export async function membershipSummary(request: Request, env: Env): Promise<Response> {
   if (request.method !== 'GET') {
@@ -29,16 +30,33 @@ export async function membershipCatalog(request: Request, env: Env): Promise<Res
   if (request.method !== 'GET') {
     return apiError(405, 'METHOD_NOT_ALLOWED', 'Method not allowed')
   }
-  const response = await minecraftRpc(env, {
+  const menuResponse = await minecraftRpc(env, {
+    capability: 'membership.read',
+    operation: 'membership.menu',
+    serverId: env.MEMBERSHIP_SERVER_ID,
+    payload: { playerUuid: PUBLIC_PRICING_PLAYER_UUID },
+    timeoutMs: 5_000,
+  })
+  const menuEnvelope = await readEnvelope(menuResponse)
+  if (menuResponse.ok && isRecord(menuEnvelope.data)) {
+    const menuCatalog = validateMenuCatalog(menuEnvelope.data)
+    if (menuCatalog !== undefined) {
+      return jsonResponse({ ok: true, data: menuCatalog })
+    }
+  }
+
+  // Older Minecraft nodes may not expose the menu snapshot yet. Keep the public
+  // catalog available, but without promotion data, until that node is upgraded.
+  const catalogResponse = await minecraftRpc(env, {
     capability: 'membership.read',
     operation: 'membership.catalog',
     serverId: env.MEMBERSHIP_SERVER_ID,
     payload: {},
     timeoutMs: 5_000,
   })
-  const envelope = await readEnvelope(response)
-  if (!response.ok) {
-    return jsonResponse(envelope, { status: response.status })
+  const envelope = await readEnvelope(catalogResponse)
+  if (!catalogResponse.ok) {
+    return jsonResponse(envelope, { status: catalogResponse.status })
   }
   const data = envelope.data
   if (!Array.isArray(data)) {
@@ -49,6 +67,30 @@ export async function membershipCatalog(request: Request, env: Env): Promise<Res
     return invalidMinecraftResponse()
   }
   return jsonResponse({ ok: true, data: catalog })
+}
+
+function validateMenuCatalog(value: Record<string, unknown>): Record<string, unknown>[] | undefined {
+  if (!Array.isArray(value.tiers)) return undefined
+  const catalog = value.tiers.map(item => {
+    if (!isRecord(item) || !isRecord(item.tier)) return undefined
+    const tier = validateTier(item.tier)
+    if (tier === undefined) return undefined
+    if (item.quote === null) return tier
+    const quote = isRecord(item.quote) ? validateQuote(item.quote) : undefined
+    if (quote === undefined || !isRecord(quote.tier) || quote.tier.key !== tier.key) {
+      return undefined
+    }
+    return {
+      ...tier,
+      basePricePoints: quote.basePricePoints,
+      promotionOffBps: quote.promotionOffBps,
+      promotionEndsAt: quote.promotionEndsAt,
+      discountedPricePoints: quote.discountedPricePoints,
+    }
+  })
+  return catalog.some(item => item === undefined)
+    ? undefined
+    : catalog as Record<string, unknown>[]
 }
 
 export async function membershipQuote(request: Request, env: Env): Promise<Response> {

@@ -1,6 +1,7 @@
 import { BridgeCoordinator } from './durable-objects/BridgeCoordinator'
 import { AuthRateLimitObject } from './durable-objects/AuthRateLimitObject'
 import { SessionObject } from './durable-objects/SessionObject'
+import { PaymentCoordinator } from './durable-objects/PaymentCoordinator'
 import type { Env } from './env'
 import { applyCors, preflight, validateApiOrigin } from './http/cors'
 import { apiError, jsonResponse } from './http/json'
@@ -16,12 +17,13 @@ import {
 import { redeem } from './routes/redeem'
 import { serverStatus } from './routes/servers'
 import { accountSecurity, changePassword, emailUnavailable } from './routes/security'
+import { createPaymentOrder, paymentNotify, paymentOrderStatus } from './routes/payments'
 import {
   authenticateBridgeUpgrade,
   BridgeAuthenticationError,
 } from './security/bridge-auth'
 
-export { AuthRateLimitObject, BridgeCoordinator, SessionObject }
+export { AuthRateLimitObject, BridgeCoordinator, PaymentCoordinator, SessionObject }
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -48,6 +50,9 @@ export default {
 } satisfies ExportedHandler<Env>
 
 async function routeApi(request: Request, env: Env, url: URL): Promise<Response> {
+  if (url.pathname === '/api/payments/zhifufm/notify') {
+    return paymentNotify(request, env, url)
+  }
     if (url.pathname === '/api/auth/login') {
       return login(request, env)
     }
@@ -99,6 +104,12 @@ async function routeApi(request: Request, env: Env, url: URL): Promise<Response>
     }
     if (url.pathname === '/api/redeem') {
       return redeem(request, env)
+    }
+    if (url.pathname === '/api/payments/orders') {
+      return createPaymentOrder(request, env)
+    }
+    if (url.pathname === '/api/payments/orders/status') {
+      return paymentOrderStatus(request, env, url)
     }
     if (request.method === 'GET' && url.pathname === '/api/servers/status') {
       return serverStatus(request, env)

@@ -4,3 +4,6 @@ AUTH_RATE_LIMIT_SALT=replace-with-at-least-32-random-characters
 CCT_ALLOWED_ORIGINS=http://localhost:4321,https://cctstudio.cn,https://www.cctstudio.cn
 EXCHANGE_SOURCE_SERVERS_JSON={"survival_coins":"survival"}
 MEMBERSHIP_SERVER_ID=lobby
+ZHIFUX_API_BASE=https://replace-with-api-root.example
+ZHIFUX_MERCHANT_NUM=replace-with-merchant-number
+ZHIFUX_SECRET=replace-with-access-secret

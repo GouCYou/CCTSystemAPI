@@ -16,12 +16,17 @@ export async function accountSecurity(request: Request, env: Env): Promise<Respo
   const envelope = await readEnvelope(response)
   if (!response.ok) return jsonResponse(envelope, { status: response.status })
   const data = isRecord(envelope.data) ? envelope.data : undefined
+  const discordBound = data?.discordBound === undefined ? false : data.discordBound
+  const discordUsername = data?.discordUsername === undefined ? null : data.discordUsername
   if (data === undefined
     || !(data.email === null || (typeof data.email === 'string' && data.email.length <= 254))
     || typeof data.registeredAt !== 'string'
     || !(data.lastLoginAt === null || typeof data.lastLoginAt === 'string')
     || !(data.lastLoginIp === null || (typeof data.lastLoginIp === 'string' && data.lastLoginIp.length <= 64))
-    || typeof data.qqBound !== 'boolean') {
+    || typeof data.qqBound !== 'boolean'
+    || typeof discordBound !== 'boolean'
+    || !(discordUsername === null
+      || (typeof discordUsername === 'string' && discordUsername.length <= 80))) {
     return apiError(502, 'ACCOUNT_SECURITY_INVALID', 'Account service returned an invalid response', true)
   }
   const lastLoginLocation = typeof data.lastLoginIp === 'string'
@@ -36,6 +41,8 @@ export async function accountSecurity(request: Request, env: Env): Promise<Respo
       lastLoginIp: data.lastLoginIp,
       lastLoginLocation,
       qqBound: data.qqBound,
+      discordBound,
+      discordUsername,
     },
   })
 }

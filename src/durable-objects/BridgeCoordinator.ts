@@ -442,5 +442,7 @@ function isStringArray(value: unknown): value is string[] {
 function isAllowedNodeCall(capability: string, operation: string): boolean {
   return (capability === 'membership.read'
       && ['membership.catalog', 'membership.summary', 'membership.menu', 'membership.quote'].includes(operation))
-    || (capability === 'membership.mutate' && operation === 'membership.purchase')
+    || (capability === 'membership.mutate'
+      && ['membership.purchase', 'membership.social-binding-reward', 'membership.admin'].includes(operation))
+    || (capability === 'exchange.execute' && operation === 'economy.social-binding-reward')
 }

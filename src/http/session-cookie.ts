@@ -20,11 +20,11 @@ export function readSessionToken(request: Request): string | undefined {
 }
 
 export function createSessionCookie(token: string, ttlSeconds: number): string {
-  return `${SESSION_COOKIE}=${token}; Max-Age=${ttlSeconds}; Path=/; Secure; HttpOnly; SameSite=Strict`
+  return `${SESSION_COOKIE}=${token}; Max-Age=${ttlSeconds}; Path=/; Secure; HttpOnly; SameSite=Lax`
 }
 
 export function clearSessionCookie(): string {
-  return `${SESSION_COOKIE}=; Max-Age=0; Path=/; Secure; HttpOnly; SameSite=Strict`
+  return `${SESSION_COOKIE}=; Max-Age=0; Path=/; Secure; HttpOnly; SameSite=Lax`
 }
 
 export function randomSessionToken(): string {

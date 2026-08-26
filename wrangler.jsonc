@@ -14,7 +14,7 @@
     "enabled": true
   },
   "secrets": {
-    "required": ["NODE_KEYS_JSON", "AUTH_RATE_LIMIT_SALT"]
+    "required": ["NODE_KEYS_JSON", "AUTH_RATE_LIMIT_SALT", "DISCORD_CLIENT_SECRET"]
   },
   "vars": {
     "CCT_NETWORK_ID": "cct-main",
@@ -25,12 +25,10 @@
     "SKIN_SERVER_ID": "proxy",
     "PROFILE_SERVER_ID": "proxy",
     "POINTS_SERVER_ID": "lobby",
-    "PAYMENT_ENABLED": "false",
-    "POINTS_PER_CNY": "20",
-    "PAYMENT_NOTIFY_URL": "https://api.cctstudio.cn/api/payments/zhifufm/notify",
-    "PAYMENT_RETURN_URL": "https://www.cctstudio.cn/account",
-    "ZHIFUX_PAY_TYPE": "aloop",
-    "SESSION_TTL_SECONDS": "604800"
+    "SESSION_TTL_SECONDS": "604800",
+    "DISCORD_CLIENT_ID": "1540972787538333748",
+    "DISCORD_REDIRECT_URI": "https://api.cctstudio.cn/api/me/discord/callback",
+    "DISCORD_RETURN_URL": "https://www.cctstudio.cn/account"
   },
   "durable_objects": {
     "bindings": [
@@ -45,10 +43,6 @@
       {
         "name": "AUTH_RATE_LIMIT",
         "class_name": "AuthRateLimitObject"
-      },
-      {
-        "name": "PAYMENT_COORDINATOR",
-        "class_name": "PaymentCoordinator"
       }
     ]
   },
@@ -62,10 +56,6 @@
       "storage": "sqlite"
     },
     "AuthRateLimitObject": {
-      "type": "durable-object",
-      "storage": "sqlite"
-    },
-    "PaymentCoordinator": {
       "type": "durable-object",
       "storage": "sqlite"
     }

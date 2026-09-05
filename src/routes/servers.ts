@@ -8,17 +8,7 @@ export async function serverStatus(request: Request, env: Env): Promise<Response
     return apiError(405, 'METHOD_NOT_ALLOWED', 'Method not allowed')
   }
   const startedAt = Date.now()
-  const bridge = env.BRIDGE_COORDINATOR.getByName(env.CCT_NETWORK_ID)
-  const response = await bridge.fetch(new Request('https://bridge.internal/rpc', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      capability: 'network.status.read',
-      operation: 'network.status.read',
-      payload: {},
-      timeoutMs: 5_000,
-    }),
-  }))
+  const response = await readNetworkStatus(env)
   const envelope = await readEnvelope(response)
   if (!response.ok) {
     return jsonResponse(envelope, { status: response.status })
@@ -52,6 +42,31 @@ export async function serverStatus(request: Request, env: Env): Promise<Response
       servers,
     },
   })
+}
+
+/**
+ * A Minecraft node reconnect can briefly race a public status refresh. Retrying
+ * only retryable bridge failures prevents that transient from being presented as
+ * an outage, while genuine offline and validation errors remain immediate.
+ */
+async function readNetworkStatus(env: Env): Promise<Response> {
+  const bridge = env.BRIDGE_COORDINATOR.getByName(env.CCT_NETWORK_ID)
+  let response: Response | undefined
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    response = await bridge.fetch(new Request('https://bridge.internal/rpc', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        capability: 'network.status.read',
+        operation: 'network.status.read',
+        payload: {},
+        timeoutMs: 5_000,
+      }),
+    }))
+    if (response.status < 500 || attempt === 2) return response
+    await new Promise(resolve => setTimeout(resolve, 200 * (attempt + 1)))
+  }
+  return response as Response
 }
 
 async function readEnvelope(response: Response): Promise<Record<string, unknown>> {

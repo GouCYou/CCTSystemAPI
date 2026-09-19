@@ -46,6 +46,33 @@ describe('admin access control', () => {
 
     expect(response.status).toBe(403)
   })
+
+  it('allows staff to request the registered player directory', async () => {
+    const request = authenticatedRequest('/api/admin/players?scope=registered&page=1')
+    const response = await adminRoute(request, environment('admin'), new URL(request.url))
+
+    expect(response.status).toBe(200)
+  })
+
+  it('refuses membership shortcuts when the target is staff', async () => {
+    const request = authenticatedRequest('/api/admin/players/membership', {
+      method: 'POST',
+      headers: { 'X-CCT-CSRF': '1' },
+      body: JSON.stringify({
+        action: 'GRANT',
+        playerUuid: PLAYER_UUID,
+        tierKey: 'vip',
+        days: 30,
+        reason: 'test',
+      }),
+    })
+    const response = await adminRoute(request, environment('owner'), new URL(request.url))
+
+    expect(response.status).toBe(403)
+    expect(await response.json()).toMatchObject({
+      error: { code: 'STAFF_TARGET_FORBIDDEN' },
+    })
+  })
 })
 
 function authenticatedRequest(path: string, init: RequestInit = {}) {

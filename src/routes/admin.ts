@@ -2,11 +2,14 @@ import type { Env } from '../env'
 import { apiError, jsonResponse } from '../http/json'
 import { consumeMutationLimit } from '../security/mutation-rate-limit'
 import { readSession, type SessionData } from '../security/session'
+import { avatarForPlayer } from './avatar'
 
 const STAFF_GROUPS = new Set(['owner', 'admin', 'mod'])
 const CONSOLE_GROUPS = new Set(['owner', 'admin'])
 const SERVER_ID = /^[a-z0-9][a-z0-9_-]{1,63}$/
 const PLAYER = /^(?:[A-Za-z0-9_]{3,16}|[0-9a-fA-F-]{36})$/
+const PLAYER_UUID = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$/
+const PLAYER_NAME = /^[A-Za-z0-9_]{3,16}$/
 
 interface AdminIdentity {
   session: SessionData
@@ -16,6 +19,16 @@ interface AdminIdentity {
 interface PunishmentInput extends Record<string, string> {
   action: string
   player: string
+  reason: string
+}
+
+interface MembershipMutationInput extends Record<string, unknown> {
+  action: string
+  playerUuid: string
+  tierKey: string
+  days: number
+  expiresAt: null
+  actor: string
   reason: string
 }
 
@@ -36,6 +49,47 @@ export async function adminRoute(request: Request, env: Env, url: URL): Promise<
   }
   if (request.method === 'GET' && url.pathname === '/api/admin/servers') {
     return adminServers(env, admin)
+  }
+  if (request.method === 'GET' && url.pathname === '/api/admin/players') {
+    const scope = pageString(url, 'scope', 16, 'registered')
+    if (scope !== 'registered' && scope !== 'online') return invalidRequest()
+    return adminRead(
+      env,
+      admin,
+      scope === 'online' ? env.PROFILE_SERVER_ID : env.MEMBERSHIP_SERVER_ID,
+      scope === 'online' ? 'admin.players.online' : 'admin.players.registered',
+      {
+        page: pageNumber(url, 'page', 1, 100_000, 1),
+        pageSize: pageNumber(url, 'pageSize', 1, 100, 20),
+        query: pageString(url, 'query', 36, ''),
+      },
+    )
+  }
+  if (request.method === 'GET' && url.pathname === '/api/admin/players/avatar') {
+    const playerUuid = url.searchParams.get('uuid') ?? ''
+    const playerName = url.searchParams.get('name') ?? ''
+    if (!PLAYER_UUID.test(playerUuid) || !PLAYER_NAME.test(playerName)) return invalidRequest()
+    return avatarForPlayer(request, env, playerUuid, playerName)
+  }
+  if (request.method === 'POST' && url.pathname === '/api/admin/players/membership') {
+    return mutate(request, env, admin, 'player-membership', 30, async input => {
+      const valid = membershipMutation(input, admin)
+      if (valid === undefined) return invalidRequest()
+      const protectedResponse = await rejectStaffTarget(env, valid.playerUuid)
+      if (protectedResponse !== undefined) return protectedResponse
+      const response = await adminRpc(
+        env,
+        admin,
+        'admin.mutate',
+        'admin.players.membership',
+        env.MEMBERSHIP_SERVER_ID,
+        valid,
+        12_000,
+      )
+      await auditResult(env, admin, response, `PLAYER_MEMBERSHIP_${valid.action}`,
+        valid.playerUuid, valid)
+      return passthrough(response)
+    })
   }
   if (request.method === 'GET' && url.pathname === '/api/admin/redeem') {
     return adminRead(env, admin, env.REDEEM_SERVER_ID, 'admin.redeem.list', {
@@ -289,6 +343,53 @@ function punishment(value: unknown): PunishmentInput | undefined {
     reason: value.reason.trim(),
     ...(action === 'TEMPBAN' ? { duration: value.duration as string } : {}),
   }
+}
+
+function membershipMutation(
+  value: unknown,
+  admin: AdminIdentity,
+): MembershipMutationInput | undefined {
+  if (!isRecord(value) || typeof value.action !== 'string'
+    || typeof value.playerUuid !== 'string' || !PLAYER_UUID.test(value.playerUuid)
+    || typeof value.reason !== 'string' || value.reason.trim().length < 1
+    || value.reason.length > 255) return undefined
+  const action = value.action.toUpperCase()
+  if (!new Set(['GRANT', 'EXTEND', 'REMOVE']).has(action)) return undefined
+  const tierKey = typeof value.tierKey === 'string' ? value.tierKey.trim().toLowerCase() : ''
+  const days = value.days
+  if (!/^[a-z0-9][a-z0-9_-]{1,63}$/.test(tierKey)) return undefined
+  if ((action === 'GRANT' || action === 'EXTEND')
+    && (!Number.isSafeInteger(days) || (days as number) < 1 || (days as number) > 365)) {
+    return undefined
+  }
+  return {
+    action,
+    playerUuid: value.playerUuid,
+    tierKey,
+    days: action === 'REMOVE' ? 0 : days as number,
+    expiresAt: null,
+    actor: `web:${admin.session.displayName}`,
+    reason: value.reason.trim(),
+  }
+}
+
+async function rejectStaffTarget(env: Env, playerUuid: string): Promise<Response | undefined> {
+  const response = await minecraftRpc(env, {
+    capability: 'profile.read',
+    operation: 'profile.read',
+    serverId: env.PROFILE_SERVER_ID,
+    payload: { playerUuid },
+    timeoutMs: 5_000,
+  })
+  const envelope = await readEnvelope(response)
+  if (!response.ok || !isRecord(envelope.data)
+    || typeof envelope.data.primaryGroup !== 'string') {
+    return apiError(503, 'PLAYER_GROUP_UNAVAILABLE', 'Player group could not be verified', true)
+  }
+  if (new Set(['helper', ...STAFF_GROUPS]).has(envelope.data.primaryGroup.toLowerCase())) {
+    return apiError(403, 'STAFF_TARGET_FORBIDDEN', 'Staff accounts cannot be changed here')
+  }
+  return undefined
 }
 
 async function passthrough(response: Response): Promise<Response> {

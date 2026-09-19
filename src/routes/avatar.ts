@@ -13,6 +13,15 @@ export async function avatar(request: Request, env: Env): Promise<Response> {
   if (session === undefined) {
     return apiError(401, 'SESSION_INVALID', 'Session is invalid')
   }
+  return avatarForPlayer(request, env, session.playerUuid, session.displayName)
+}
+
+export async function avatarForPlayer(
+  request: Request,
+  env: Env,
+  playerUuid: string,
+  playerName: string,
+): Promise<Response> {
   const bridge = env.BRIDGE_COORDINATOR.getByName(env.CCT_NETWORK_ID)
   const response = await bridge.fetch(new Request('https://bridge.internal/rpc', {
     method: 'POST',
@@ -22,8 +31,8 @@ export async function avatar(request: Request, env: Env): Promise<Response> {
       operation: 'skin.avatar.read',
       serverId: env.SKIN_SERVER_ID,
       payload: {
-        playerUuid: session.playerUuid,
-        playerName: session.displayName,
+        playerUuid,
+        playerName,
       },
       timeoutMs: 12_000,
     }),

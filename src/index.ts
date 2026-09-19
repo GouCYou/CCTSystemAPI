@@ -18,6 +18,7 @@ import { serverStatus } from './routes/servers'
 import { accountSecurity, changePassword, emailUnavailable } from './routes/security'
 import { discordAuthorize, discordCallback, discordUnbind } from './routes/discord'
 import { qqBindStart, qqUnbind } from './routes/qq'
+import { adminRoute } from './routes/admin'
 import {
   authenticateBridgeUpgrade,
   BridgeAuthenticationError,
@@ -50,77 +51,80 @@ export default {
 } satisfies ExportedHandler<Env>
 
 async function routeApi(request: Request, env: Env, url: URL): Promise<Response> {
-    if (url.pathname === '/api/auth/login') {
-      return login(request, env)
-    }
-    if (url.pathname === '/api/auth/logout') {
-      return logout(request, env)
-    }
-    if (url.pathname === '/api/me') {
-      return me(request, env)
-    }
-    if (url.pathname === '/api/me/avatar') {
-      return avatar(request, env)
-    }
-    if (url.pathname === '/api/me/points') {
-      return points(request, env)
-    }
-    if (url.pathname === '/api/me/points/history') {
-      return pointsHistory(request, env, url)
-    }
-    if (url.pathname === '/api/me/exchange') {
-      return exchangeQuote(request, env, url)
-    }
-    if (url.pathname === '/api/me/exchange/sources') {
-      return exchangeQuotes(request, env)
-    }
-    if (url.pathname === '/api/me/membership') {
-      return membershipSummary(request, env)
-    }
-    if (url.pathname === '/api/me/security') {
-      return accountSecurity(request, env)
-    }
-    if (url.pathname === '/api/me/discord/authorize') {
-      return discordAuthorize(request, env)
-    }
-    if (url.pathname === '/api/me/discord/callback') {
-      return discordCallback(request, env, url)
-    }
-    if (url.pathname === '/api/me/discord/unbind') {
-      return discordUnbind(request, env)
-    }
-    if (url.pathname === '/api/me/qq/bind') {
-      return qqBindStart(request, env)
-    }
-    if (url.pathname === '/api/me/qq/unbind') {
-      return qqUnbind(request, env)
-    }
-    if (url.pathname === '/api/me/security/password') {
-      return changePassword(request, env)
-    }
-    if (url.pathname === '/api/me/security/email/code'
-      || url.pathname === '/api/me/security/email') {
-      return emailUnavailable()
-    }
-    if (url.pathname === '/api/catalog/memberships') {
-      return membershipCatalog(request, env)
-    }
-    if (url.pathname === '/api/membership/quote') {
-      return membershipQuote(request, env)
-    }
-    if (url.pathname === '/api/membership/purchase') {
-      return purchaseMembership(request, env)
-    }
-    if (url.pathname === '/api/exchange') {
-      return executeExchange(request, env)
-    }
-    if (url.pathname === '/api/redeem') {
-      return redeem(request, env)
-    }
-    if (request.method === 'GET' && url.pathname === '/api/servers/status') {
-      return serverStatus(request, env)
-    }
-    return apiError(501, 'NOT_IMPLEMENTED', 'This API is not available yet')
+  if (url.pathname.startsWith('/api/admin/')) {
+    return adminRoute(request, env, url)
+  }
+  if (url.pathname === '/api/auth/login') {
+    return login(request, env)
+  }
+  if (url.pathname === '/api/auth/logout') {
+    return logout(request, env)
+  }
+  if (url.pathname === '/api/me') {
+    return me(request, env)
+  }
+  if (url.pathname === '/api/me/avatar') {
+    return avatar(request, env)
+  }
+  if (url.pathname === '/api/me/points') {
+    return points(request, env)
+  }
+  if (url.pathname === '/api/me/points/history') {
+    return pointsHistory(request, env, url)
+  }
+  if (url.pathname === '/api/me/exchange') {
+    return exchangeQuote(request, env, url)
+  }
+  if (url.pathname === '/api/me/exchange/sources') {
+    return exchangeQuotes(request, env)
+  }
+  if (url.pathname === '/api/me/membership') {
+    return membershipSummary(request, env)
+  }
+  if (url.pathname === '/api/me/security') {
+    return accountSecurity(request, env)
+  }
+  if (url.pathname === '/api/me/discord/authorize') {
+    return discordAuthorize(request, env)
+  }
+  if (url.pathname === '/api/me/discord/callback') {
+    return discordCallback(request, env, url)
+  }
+  if (url.pathname === '/api/me/discord/unbind') {
+    return discordUnbind(request, env)
+  }
+  if (url.pathname === '/api/me/qq/bind') {
+    return qqBindStart(request, env)
+  }
+  if (url.pathname === '/api/me/qq/unbind') {
+    return qqUnbind(request, env)
+  }
+  if (url.pathname === '/api/me/security/password') {
+    return changePassword(request, env)
+  }
+  if (url.pathname === '/api/me/security/email/code'
+    || url.pathname === '/api/me/security/email') {
+    return emailUnavailable()
+  }
+  if (url.pathname === '/api/catalog/memberships') {
+    return membershipCatalog(request, env)
+  }
+  if (url.pathname === '/api/membership/quote') {
+    return membershipQuote(request, env)
+  }
+  if (url.pathname === '/api/membership/purchase') {
+    return purchaseMembership(request, env)
+  }
+  if (url.pathname === '/api/exchange') {
+    return executeExchange(request, env)
+  }
+  if (url.pathname === '/api/redeem') {
+    return redeem(request, env)
+  }
+  if (request.method === 'GET' && url.pathname === '/api/servers/status') {
+    return serverStatus(request, env)
+  }
+  return apiError(501, 'NOT_IMPLEMENTED', 'This API is not available yet')
 }
 
 async function connectMinecraftNode(request: Request, env: Env): Promise<Response> {

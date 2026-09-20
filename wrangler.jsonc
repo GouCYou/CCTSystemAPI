@@ -21,6 +21,7 @@
     "CCT_ALLOWED_ORIGINS": "https://cctstudio.cn,https://www.cctstudio.cn",
     "EXCHANGE_SOURCE_SERVERS_JSON": "{\"survival_coins\":\"survival\"}",
     "MEMBERSHIP_SERVER_ID": "lobby",
+    "AUTH_SERVER_ID": "login",
     "REDEEM_SERVER_ID": "lobby",
     "SKIN_SERVER_ID": "proxy",
     "PROFILE_SERVER_ID": "proxy",

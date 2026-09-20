@@ -118,7 +118,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-async function locateIp(value: string, request: Request): Promise<string | null> {
+export async function locateIp(value: string, request: Request): Promise<string | null> {
   const ip = normalizeIp(value)
   if (ip === undefined || isPrivateIp(ip)) return null
   const currentIp = normalizeIp(request.headers.get('CF-Connecting-IP') ?? '')

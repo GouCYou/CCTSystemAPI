@@ -106,6 +106,7 @@ function environment(group: string): Env {
     CCT_NETWORK_ID: 'test',
     PROFILE_SERVER_ID: 'proxy',
     MEMBERSHIP_SERVER_ID: 'lobby',
+    AUTH_SERVER_ID: 'login',
     REDEEM_SERVER_ID: 'lobby',
     SKIN_SERVER_ID: 'proxy',
     POINTS_SERVER_ID: 'lobby',

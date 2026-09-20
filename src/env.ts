@@ -8,6 +8,7 @@ export interface Env {
   CCT_ALLOWED_ORIGINS: string
   EXCHANGE_SOURCE_SERVERS_JSON: string
   MEMBERSHIP_SERVER_ID: string
+  AUTH_SERVER_ID: string
   REDEEM_SERVER_ID: string
   SKIN_SERVER_ID: string
   PROFILE_SERVER_ID: string

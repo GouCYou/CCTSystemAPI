@@ -3,6 +3,7 @@ import { apiError, jsonResponse } from '../http/json'
 import { consumeMutationLimit } from '../security/mutation-rate-limit'
 import { readSession, type SessionData } from '../security/session'
 import { avatarForPlayer } from './avatar'
+import { locateIp } from './security'
 
 const STAFF_GROUPS = new Set(['owner', 'admin', 'mod'])
 const CONSOLE_GROUPS = new Set(['owner', 'admin'])
@@ -56,14 +57,14 @@ export async function adminRoute(request: Request, env: Env, url: URL): Promise<
     return adminRead(
       env,
       admin,
-      scope === 'online' ? env.PROFILE_SERVER_ID : env.MEMBERSHIP_SERVER_ID,
+      scope === 'online' ? env.PROFILE_SERVER_ID : env.AUTH_SERVER_ID,
       scope === 'online' ? 'admin.players.online' : 'admin.players.registered',
       {
         page: pageNumber(url, 'page', 1, 100_000, 1),
-        pageSize: pageNumber(url, 'pageSize', 1, 100, 20),
+        pageSize: pageNumber(url, 'pageSize', 1, 100, 10),
         query: pageString(url, 'query', 36, ''),
       },
-    )
+    ).then(response => scope === 'registered' ? enrichPlayerLocations(response, request) : response)
   }
   if (request.method === 'GET' && url.pathname === '/api/admin/players/avatar') {
     const playerUuid = url.searchParams.get('uuid') ?? ''
@@ -111,8 +112,9 @@ export async function adminRoute(request: Request, env: Env, url: URL): Promise<
   if (request.method === 'GET' && url.pathname === '/api/admin/reports') {
     return adminRead(env, admin, env.MEMBERSHIP_SERVER_ID, 'admin.reports.list', {
       status: pageString(url, 'status', 24, 'ALL').toUpperCase(),
+      query: pageString(url, 'query', 80, ''),
       page: pageNumber(url, 'page', 1, 100_000, 1),
-      pageSize: pageNumber(url, 'pageSize', 1, 100, 20),
+      pageSize: pageNumber(url, 'pageSize', 1, 100, 5),
     })
   }
   if (request.method === 'POST' && url.pathname === '/api/admin/reports/status') {
@@ -137,9 +139,9 @@ export async function adminRoute(request: Request, env: Env, url: URL): Promise<
   }
   if (request.method === 'GET' && url.pathname === '/api/admin/punishments') {
     return adminRead(env, admin, env.PROFILE_SERVER_ID, 'admin.punishments.list', {
-      type: pageString(url, 'type', 16, 'bans'),
+      type: pageString(url, 'type', 16, 'all'),
       page: pageNumber(url, 'page', 1, 100_000, 1),
-      pageSize: pageNumber(url, 'pageSize', 1, 100, 20),
+      pageSize: pageNumber(url, 'pageSize', 1, 100, 10),
     })
   }
   if (request.method === 'POST' && url.pathname === '/api/admin/punishments') {
@@ -184,15 +186,25 @@ export async function adminRoute(request: Request, env: Env, url: URL): Promise<
 async function requireAdmin(request: Request, env: Env): Promise<AdminIdentity | Response> {
   const session = await readSession(request, env)
   if (session === undefined) return apiError(401, 'SESSION_INVALID', 'Session is invalid')
-  const response = await minecraftRpc(env, {
-    capability: 'profile.read',
-    operation: 'profile.read',
-    serverId: env.PROFILE_SERVER_ID,
-    payload: { playerUuid: session.playerUuid },
-    timeoutMs: 5_000,
-  })
-  const envelope = await readEnvelope(response)
-  if (!response.ok || !isRecord(envelope.data)
+  let envelope: Record<string, unknown> = {}
+  let authorized = false
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const response = await minecraftRpc(env, {
+      capability: 'profile.read',
+      operation: 'profile.read',
+      serverId: env.PROFILE_SERVER_ID,
+      payload: { playerUuid: session.playerUuid },
+      timeoutMs: 5_000,
+    })
+    envelope = await readEnvelope(response)
+    if (response.ok && isRecord(envelope.data)
+      && typeof envelope.data.primaryGroup === 'string') {
+      authorized = true
+      break
+    }
+    if (attempt < 2) await delay(250 * (attempt + 1))
+  }
+  if (!authorized || !isRecord(envelope.data)
     || typeof envelope.data.primaryGroup !== 'string') {
     return apiError(503, 'ADMIN_AUTH_UNAVAILABLE', 'Admin authorization is unavailable', true)
   }
@@ -201,6 +213,23 @@ async function requireAdmin(request: Request, env: Env): Promise<AdminIdentity |
     return apiError(403, 'ADMIN_FORBIDDEN', 'Admin access is forbidden')
   }
   return { session, group }
+}
+
+async function enrichPlayerLocations(response: Response, request: Request): Promise<Response> {
+  const envelope = await readEnvelope(response)
+  if (!response.ok || !isRecord(envelope.data) || !Array.isArray(envelope.data.items)) {
+    return jsonResponse(envelope, { status: response.status })
+  }
+  const items = envelope.data.items
+  await Promise.all(items.map(async value => {
+    if (!isRecord(value) || typeof value.lastLoginIp !== 'string') return
+    value.lastLoginLocation = await locateIp(value.lastLoginIp, request)
+  }))
+  return jsonResponse(envelope, { status: response.status })
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms))
 }
 
 async function adminRead(

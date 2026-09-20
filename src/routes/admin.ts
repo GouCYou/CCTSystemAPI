@@ -138,11 +138,12 @@ export async function adminRoute(request: Request, env: Env, url: URL): Promise<
     })
   }
   if (request.method === 'GET' && url.pathname === '/api/admin/punishments') {
-    return adminRead(env, admin, env.PROFILE_SERVER_ID, 'admin.punishments.list', {
-      type: pageString(url, 'type', 16, 'all'),
-      page: pageNumber(url, 'page', 1, 100_000, 1),
-      pageSize: pageNumber(url, 'pageSize', 1, 100, 10),
-    })
+    return adminPunishmentRead(
+      env,
+      admin,
+      pageNumber(url, 'page', 1, 100_000, 1),
+      pageNumber(url, 'pageSize', 1, 100, 10),
+    )
   }
   if (request.method === 'POST' && url.pathname === '/api/admin/punishments') {
     return mutate(request, env, admin, 'punishment', 20, async input => {
@@ -181,6 +182,55 @@ export async function adminRoute(request: Request, env: Env, url: URL): Promise<
     })
   }
   return apiError(404, 'NOT_FOUND', 'Not found')
+}
+
+async function adminPunishmentRead(
+  env: Env,
+  admin: AdminIdentity,
+  page: number,
+  pageSize: number,
+): Promise<Response> {
+  const combined = await adminRpc(env, admin, 'admin.read', 'admin.punishments.list',
+    env.PROFILE_SERVER_ID, { type: 'all', page, pageSize })
+  if (combined.ok || combined.status !== 400) return passthrough(combined)
+
+  // Compatibility for a running Velocity node that has not loaded the new CCTSystem jar yet.
+  const fetchSize = Math.min(page * pageSize, 100)
+  const [bans, kicks] = await Promise.all([
+    adminRpc(env, admin, 'admin.read', 'admin.punishments.list', env.PROFILE_SERVER_ID,
+      { type: 'bans', page: 1, pageSize: fetchSize }),
+    adminRpc(env, admin, 'admin.read', 'admin.punishments.list', env.PROFILE_SERVER_ID,
+      { type: 'kicks', page: 1, pageSize: fetchSize }),
+  ])
+  const [banEnvelope, kickEnvelope] = await Promise.all([readEnvelope(bans), readEnvelope(kicks)])
+  if (!bans.ok || !kicks.ok || !isPageEnvelope(banEnvelope) || !isPageEnvelope(kickEnvelope)) {
+    return passthrough(combined)
+  }
+  const allItems = [...banEnvelope.data.items, ...kickEnvelope.data.items]
+    .filter(isRecord)
+    .sort((left, right) => numeric(right.dateStart) - numeric(left.dateStart))
+  const totalItems = numeric(banEnvelope.data.totalItems) + numeric(kickEnvelope.data.totalItems)
+  const offset = (page - 1) * pageSize
+  return jsonResponse({
+    ok: true,
+    data: {
+      items: allItems.slice(offset, offset + pageSize),
+      page,
+      pageSize,
+      totalItems,
+      totalPages: Math.max(1, Math.ceil(totalItems / pageSize)),
+    },
+  })
+}
+
+function isPageEnvelope(value: Record<string, unknown>): value is Record<string, unknown> & {
+  data: { items: unknown[], totalItems: unknown }
+} {
+  return isRecord(value.data) && Array.isArray(value.data.items)
+}
+
+function numeric(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0
 }
 
 async function requireAdmin(request: Request, env: Env): Promise<AdminIdentity | Response> {

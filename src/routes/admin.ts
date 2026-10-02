@@ -2,6 +2,7 @@ import type { Env } from '../env'
 import { apiError, jsonResponse } from '../http/json'
 import { consumeMutationLimit } from '../security/mutation-rate-limit'
 import { readSession, type SessionData } from '../security/session'
+import { announcementStore, validateAnnouncements } from './content'
 import { avatarForPlayer } from './avatar'
 import { locateIp } from './security'
 
@@ -46,6 +47,58 @@ export async function adminRoute(request: Request, env: Env, url: URL): Promise<
         group: admin.group,
         canUseConsole: CONSOLE_GROUPS.has(admin.group),
       },
+    })
+  }
+  if (url.pathname === '/api/admin/announcements') {
+    if (request.method === 'GET') return announcementStore(env).fetch('https://content.internal/')
+    if (request.method === 'POST') return mutate(request, env, admin, 'announcements', 20, async input => {
+      const valid = validateAnnouncements(input)
+      if (valid === undefined) return invalidRequest()
+      const response = await announcementStore(env).fetch('https://content.internal/', {
+        method: 'PUT', body: JSON.stringify({ items: valid }),
+      })
+      await auditResult(env, admin, response, 'ANNOUNCEMENTS_SAVE', 'website', { count: valid.length })
+      return response
+    })
+  }
+  if (request.method === 'GET' && url.pathname === '/api/admin/promotions') {
+    return adminRead(env, admin, env.MEMBERSHIP_SERVER_ID, 'admin.promotions.list', {})
+  }
+  if (request.method === 'POST' && url.pathname === '/api/admin/promotions') {
+    return mutate(request, env, admin, 'promotion', 20, async input => {
+      if (!isRecord(input)) return invalidRequest()
+      let payload: Record<string, unknown>
+      if (input.action === 'STOP' && typeof input.promotionId === 'string' && PLAYER_UUID.test(input.promotionId)) {
+        payload = { action: 'STOP', promotionId: input.promotionId }
+      } else if (input.action === 'CREATE' && typeof input.name === 'string' && input.name.trim().length > 0
+        && input.name.length <= 64 && Number.isSafeInteger(input.percentOffBps)
+        && (input.percentOffBps as number) >= 1 && (input.percentOffBps as number) <= 10000
+        && (input.targetTierKey === null || (typeof input.targetTierKey === 'string' && SERVER_ID.test(input.targetTierKey)))
+        && typeof input.startsAt === 'string' && typeof input.endsAt === 'string'
+        && Number.isFinite(Date.parse(input.startsAt)) && Number.isFinite(Date.parse(input.endsAt))
+        && Date.parse(input.endsAt) > Math.max(Date.now(), Date.parse(input.startsAt))) {
+        payload = { action: 'CREATE', name: input.name.trim(), percentOffBps: input.percentOffBps,
+          targetTierKey: input.targetTierKey, startsAt: new Date(input.startsAt).toISOString(), endsAt: new Date(input.endsAt).toISOString() }
+      } else return invalidRequest()
+      const response = await adminRpc(env, admin, 'admin.mutate', 'admin.promotions.mutate', env.MEMBERSHIP_SERVER_ID, payload)
+      await auditResult(env, admin, response, `PROMOTION_${payload.action}`, 'memberships', payload)
+      return passthrough(response)
+    })
+  }
+  if (request.method === 'GET' && url.pathname === '/api/admin/points/batches') {
+    return adminRead(env, admin, env.POINTS_SERVER_ID, 'admin.points.batches', {})
+  }
+  if (request.method === 'POST' && url.pathname === '/api/admin/points/batches') {
+    if (!CONSOLE_GROUPS.has(admin.group)) return apiError(403, 'ADMIN_FORBIDDEN', 'Bulk points require owner or admin')
+    return mutate(request, env, admin, 'bulk-points', 5, async input => {
+      if (!isRecord(input) || typeof input.batchId !== 'string' || !PLAYER_UUID.test(input.batchId)
+        || !Number.isSafeInteger(input.points) || (input.points as number) < 1 || (input.points as number) > 10000000
+        || !['ALL', 'BOUND'].includes(String(input.scope)) || typeof input.reason !== 'string'
+        || !input.reason.trim() || input.reason.length > 255) return invalidRequest()
+      const payload = { batchId: input.batchId, points: input.points, scope: input.scope, reason: input.reason.trim() }
+      const response = await adminRpc(env, admin, 'admin.mutate', 'admin.points.grant', env.POINTS_SERVER_ID, payload, 12000)
+      await auditResult(env, admin, response, 'POINTS_BULK_GRANT', input.batchId, payload)
+      return passthrough(response)
     })
   }
   if (request.method === 'GET' && url.pathname === '/api/admin/servers') {
@@ -323,11 +376,17 @@ async function adminServers(env: Env, admin: AdminIdentity): Promise<Response> {
   if (!response.ok || !isRecord(envelope.data) || !Array.isArray(envelope.data.nodes)) {
     return apiError(503, 'ADMIN_SERVERS_UNAVAILABLE', 'Server list is unavailable', true)
   }
-  const nodes = envelope.data.nodes.flatMap(value => {
+  const seen = new Set<string>()
+  const candidates = envelope.data.nodes.filter(isRecord).sort((a, b) =>
+    Number(b.ready === true) - Number(a.ready === true)
+    || String(b.lastSeenAt ?? '').localeCompare(String(a.lastSeenAt ?? '')),
+  )
+  const nodes = candidates.flatMap(value => {
     if (!isRecord(value) || typeof value.serverId !== 'string'
       || typeof value.nodeId !== 'string' || typeof value.platform !== 'string'
       || typeof value.ready !== 'boolean' || !Array.isArray(value.capabilities)) return []
-    if (!value.capabilities.includes('admin.read')) return []
+    if (!value.capabilities.includes('admin.read') || seen.has(value.serverId)) return []
+    seen.add(value.serverId)
     return [{
       serverId: value.serverId,
       nodeId: value.nodeId,

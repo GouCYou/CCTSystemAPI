@@ -33,6 +33,7 @@
   },
   "durable_objects": {
     "bindings": [
+      { "name": "WEBSITE_CONTENT", "class_name": "WebsiteContent" },
       {
         "name": "BRIDGE_COORDINATOR",
         "class_name": "BridgeCoordinator"
@@ -48,6 +49,7 @@
     ]
   },
   "exports": {
+    "WebsiteContent": { "type": "durable-object", "storage": "sqlite" },
     "BridgeCoordinator": {
       "type": "durable-object",
       "storage": "sqlite"

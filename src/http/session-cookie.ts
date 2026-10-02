@@ -19,8 +19,8 @@ export function readSessionToken(request: Request): string | undefined {
   return undefined
 }
 
-export function createSessionCookie(token: string, ttlSeconds: number): string {
-  return `${SESSION_COOKIE}=${token}; Max-Age=${ttlSeconds}; Path=/; Secure; HttpOnly; SameSite=Lax`
+export function createSessionCookie(token: string, ttlSeconds: number, rememberMe = true): string {
+  return `${SESSION_COOKIE}=${token}${rememberMe ? `; Max-Age=${ttlSeconds}` : ''}; Path=/; Secure; HttpOnly; SameSite=Lax`
 }
 
 export function clearSessionCookie(): string {

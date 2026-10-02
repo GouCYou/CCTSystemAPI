@@ -13,6 +13,15 @@ describe('login input', () => {
     })
   })
 
+  it('accepts the remember-me choice and rejects non-boolean values', async () => {
+    for (const rememberMe of [true, false]) {
+      const request = new Request('https://api.example.test/api/auth/login', { method: 'POST', body: JSON.stringify({ username: 'Player_1', password: 'value', rememberMe }) })
+      expect(await readLoginInput(request)).toEqual({ username: 'Player_1', password: 'value', rememberMe })
+    }
+    const invalid = new Request('https://api.example.test/api/auth/login', { method: 'POST', body: JSON.stringify({ username: 'Player_1', password: 'value', rememberMe: 'true' }) })
+    expect(await readLoginInput(invalid)).toBeUndefined()
+  })
+
   it('rejects malformed usernames', async () => {
     const request = new Request('https://api.example.test/api/auth/login', {
       method: 'POST',

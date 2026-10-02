@@ -12,6 +12,14 @@ describe('session cookie', () => {
     expect(createSessionCookie(token, 600)).toContain('Secure; HttpOnly; SameSite=Lax')
   })
 
+  it('persists only remembered sessions while keeping security flags for both', () => {
+    expect(createSessionCookie('a'.repeat(43), 604800, true)).toContain('Max-Age=604800')
+    const temporary = createSessionCookie('a'.repeat(43), 604800, false)
+    expect(temporary).not.toContain('Max-Age')
+    expect(temporary).not.toContain('Expires')
+    expect(temporary).toContain('Secure; HttpOnly; SameSite=Lax')
+  })
+
   it('reads only a well-formed session token', () => {
     const token = 'a'.repeat(43)
     const request = new Request('https://api.example.test', {

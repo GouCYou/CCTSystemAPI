@@ -18,13 +18,14 @@ import { serverStatus } from './routes/servers'
 import { accountSecurity, changePassword, emailUnavailable } from './routes/security'
 import { discordAuthorize, discordCallback, discordUnbind } from './routes/discord'
 import { qqBindStart, qqUnbind } from './routes/qq'
+import { WebsiteContent, publicAnnouncements } from './routes/content'
 import { adminRoute } from './routes/admin'
 import {
   authenticateBridgeUpgrade,
   BridgeAuthenticationError,
 } from './security/bridge-auth'
 
-export { AuthRateLimitObject, BridgeCoordinator, SessionObject }
+export { AuthRateLimitObject, BridgeCoordinator, SessionObject, WebsiteContent }
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -51,6 +52,7 @@ export default {
 } satisfies ExportedHandler<Env>
 
 async function routeApi(request: Request, env: Env, url: URL): Promise<Response> {
+  if (request.method === 'GET' && url.pathname === '/api/content/announcements') return publicAnnouncements(env)
   if (url.pathname.startsWith('/api/admin/')) {
     return adminRoute(request, env, url)
   }

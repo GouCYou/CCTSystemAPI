@@ -21,6 +21,7 @@ const PLAYER_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}
 interface LoginInput {
   username: string
   password: string
+  rememberMe?: boolean
 }
 
 export async function login(request: Request, env: Env): Promise<Response> {
@@ -91,7 +92,7 @@ export async function login(request: Request, env: Env): Promise<Response> {
   }
 
   const response = jsonResponse({ ok: true, data: { displayName } })
-  response.headers.set('set-cookie', createSessionCookie(token, ttlSeconds))
+  response.headers.set('set-cookie', createSessionCookie(token, ttlSeconds, input.rememberMe ?? true))
   return response
 }
 
@@ -146,12 +147,13 @@ export async function readLoginInput(request: Request): Promise<LoginInput | und
     if (!isRecord(value)
       || typeof value.username !== 'string'
       || typeof value.password !== 'string'
+      || (value.rememberMe !== undefined && typeof value.rememberMe !== 'boolean')
       || !(PLAYER_NAME.test(value.username) || PLAYER_UUID.test(value.username))
       || value.password.length < 1
       || value.password.length > 256) {
       return undefined
     }
-    return { username: value.username, password: value.password }
+    return { username: value.username, password: value.password, ...(value.rememberMe !== undefined ? { rememberMe: value.rememberMe as boolean } : {}) }
   } catch {
     return undefined
   }

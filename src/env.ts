@@ -1,4 +1,5 @@
 export interface Env {
+  WEBSITE_CONTENT: DurableObjectNamespace
   BRIDGE_COORDINATOR: DurableObjectNamespace
   SESSIONS: DurableObjectNamespace
   AUTH_RATE_LIMIT: DurableObjectNamespace

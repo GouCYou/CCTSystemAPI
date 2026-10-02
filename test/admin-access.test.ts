@@ -40,6 +40,24 @@ describe('admin access control', () => {
     expect(commandResponse.status).toBe(403)
   })
 
+  it('restricts bulk point grants to owner/admin', async () => {
+    const request = authenticatedRequest('/api/admin/points/batches', { method: 'POST', headers: { 'X-CCT-CSRF': '1' }, body: JSON.stringify({ batchId: PLAYER_UUID, points: 100, scope: 'ALL', reason: 'test' }) })
+    const response = await adminRoute(request, environment('mod'), new URL(request.url))
+    expect(response.status).toBe(403)
+  })
+  it('requires CSRF and validates bulk grant amount and scope', async () => {
+    for (const input of [{ points: -1, scope: 'ALL' }, { points: 1.5, scope: 'ALL' }, { points: 100, scope: 'ONLINE' }]) {
+      const request = authenticatedRequest('/api/admin/points/batches', { method: 'POST', headers: { 'X-CCT-CSRF': '1' }, body: JSON.stringify({ batchId: PLAYER_UUID, reason: 'test', ...input }) })
+      expect((await adminRoute(request, environment('owner'), new URL(request.url))).status).toBe(400)
+    }
+    const request = authenticatedRequest('/api/admin/points/batches', { method: 'POST', body: '{}' })
+    expect((await adminRoute(request, environment('owner'), new URL(request.url))).status).toBe(403)
+  })
+  it('rejects reversed promotion dates', async () => {
+    const request = authenticatedRequest('/api/admin/promotions', { method: 'POST', headers: { 'X-CCT-CSRF': '1' }, body: JSON.stringify({ action: 'CREATE', name: 'test', targetTierKey: null, percentOffBps: 2000, startsAt: '2030-01-02', endsAt: '2030-01-01' }) })
+    expect((await adminRoute(request, environment('owner'), new URL(request.url))).status).toBe(400)
+  })
+
   it('does not trust a non-staff session', async () => {
     const request = authenticatedRequest('/api/admin/session')
     const response = await adminRoute(request, environment('default'), new URL(request.url))
@@ -120,3 +138,21 @@ function environment(group: string): Env {
     DISCORD_RETURN_URL: '',
   } as unknown as Env
 }
+
+describe('admin server inventory', () => {
+  it('lists each logical server once and prefers a ready connection', async () => {
+    const env = environment('owner')
+    const nodes = [
+      { serverId: 'lobby', nodeId: 'old', platform: 'paper', ready: false, lastSeenAt: '2026-10-01T01:00:00Z', capabilities: ['admin.read', 'admin.mutate'] },
+      { serverId: 'lobby', nodeId: 'current', platform: 'paper', ready: true, lastSeenAt: '2026-10-01T00:00:00Z', capabilities: ['admin.read', 'admin.mutate'] },
+      { serverId: 'survival', nodeId: 'survival-1', platform: 'paper', ready: true, capabilities: ['admin.read'] },
+    ]
+    env.BRIDGE_COORDINATOR = { getByName: () => ({ fetch: async (input: string | Request) => Response.json({ ok: true, data: (typeof input === 'string' ? input : input.url).endsWith('/status') ? { nodes } : { primaryGroup: 'owner' } }) }) } as unknown as Env['BRIDGE_COORDINATOR']
+    const request = authenticatedRequest('/api/admin/servers')
+    const response = await adminRoute(request, env, new URL(request.url))
+    expect(await response.json()).toMatchObject({ data: { nodes: [
+      { serverId: 'lobby', nodeId: 'current', ready: true, canUseConsole: true },
+      { serverId: 'survival', nodeId: 'survival-1', canUseConsole: false },
+    ] } })
+  })
+})

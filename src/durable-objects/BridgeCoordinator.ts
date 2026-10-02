@@ -99,6 +99,10 @@ export class BridgeCoordinator {
       this.handleHello(webSocket, attachment, value.payload)
       return
     }
+    if (value.kind === 'heartbeat') {
+      this.sendHeartbeatAck(webSocket, attachment)
+      return
+    }
     if (value.kind === 'response') {
       this.handleResponse(attachment, value)
       webSocket.serializeAttachment(attachment)
@@ -206,6 +210,17 @@ export class BridgeCoordinator {
     ))
   }
 
+  private sendHeartbeatAck(webSocket: WebSocket, attachment: SocketAttachment): void {
+    if (webSocket.readyState !== WebSocket.OPEN) return
+    attachment.nextOutboundSequence += 1
+    webSocket.serializeAttachment(attachment)
+    webSocket.send(JSON.stringify({
+      version: PROTOCOL_VERSION,
+      kind: 'heartbeat_ack',
+      sequence: attachment.nextOutboundSequence,
+    }))
+  }
+
   private async handleNodeCall(
     sourceSocket: WebSocket,
     source: SocketAttachment,
@@ -308,7 +323,7 @@ export class BridgeCoordinator {
   }
 
   private status(): Response {
-    const nodes = this.state.getWebSockets().map(webSocket => {
+    const nodes = this.connectedSockets().map(webSocket => {
       const attachment = this.attachment(webSocket)
       return {
         serverId: attachment.serverId,
@@ -378,7 +393,7 @@ export class BridgeCoordinator {
     requestedNodeId: string | undefined,
     requestedServerId: string | undefined,
   ): { webSocket: WebSocket; attachment: SocketAttachment } | undefined {
-    for (const webSocket of this.state.getWebSockets()) {
+    for (const webSocket of this.connectedSockets()) {
       const attachment = this.attachment(webSocket)
       if (webSocket.readyState === WebSocket.OPEN
         && attachment.ready
@@ -389,6 +404,21 @@ export class BridgeCoordinator {
       }
     }
     return undefined
+  }
+
+  // Hibernating socket inventories also contain connections awaiting their close event.
+  // Reconnects must not expose those old entries or route calls to an older connection.
+  private connectedSockets(): WebSocket[] {
+    const seen = new Set<string>()
+    return this.state.getWebSockets()
+      .filter(socket => socket.readyState === WebSocket.OPEN)
+      .sort((a, b) => this.attachment(b).authenticatedAt - this.attachment(a).authenticatedAt)
+      .filter(socket => {
+        const nodeId = this.attachment(socket).nodeId
+        if (seen.has(nodeId)) return false
+        seen.add(nodeId)
+        return true
+      })
   }
 
   private attachment(webSocket: WebSocket): SocketAttachment {

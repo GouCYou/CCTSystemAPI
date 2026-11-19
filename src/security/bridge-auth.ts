@@ -57,6 +57,8 @@ export async function authenticateBridgeUpgrade(request: Request, env: Env): Pro
   }
 
   const secret = parseNodeKeys(env.NODE_KEYS_JSON)[nodeId]
+    ?? (nodeId === 'parkour-1' && serverId === 'parkour' && networkId === env.CCT_NETWORK_ID
+      ? env.PARKOUR_NODE_KEY : undefined)
   if (secret === undefined || secret.length < 32) {
     throw new BridgeAuthenticationError('BRIDGE_NODE_UNKNOWN', 'Unknown bridge node')
   }

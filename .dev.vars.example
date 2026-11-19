@@ -8,3 +8,6 @@ DISCORD_CLIENT_ID=replace-with-discord-application-id
 DISCORD_CLIENT_SECRET=replace-with-discord-client-secret
 DISCORD_REDIRECT_URI=http://localhost:8787/api/me/discord/callback
 DISCORD_RETURN_URL=http://localhost:4321/account
+
+# Optional separate key for cct-main / parkour / parkour-1; existing NODE_KEYS_JSON entries keep priority.
+# PARKOUR_NODE_KEY=replace-with-at-least-32-random-characters

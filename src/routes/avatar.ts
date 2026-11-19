@@ -4,6 +4,9 @@ import { readSession } from '../security/session'
 
 const TEXTURE_HASH = /^[0-9a-f]{32,128}$/
 const MAX_BASE64_LENGTH = 128 * 1024
+interface CachedSkin { png: Uint8Array; etag: string; expiresAt: number }
+const skins = new Map<string, CachedSkin>()
+const pendingSkins = new Map<string, Promise<CachedSkin | Response>>()
 
 export async function avatar(request: Request, env: Env): Promise<Response> {
   if (request.method !== 'GET') {
@@ -22,6 +25,35 @@ export async function avatarForPlayer(
   playerUuid: string,
   playerName: string,
 ): Promise<Response> {
+  const key = `${env.CCT_NETWORK_ID}:${playerUuid.toLowerCase()}:${playerName.toLowerCase()}`
+  const cached = skins.get(key)
+  let result: CachedSkin | Response
+  if (cached && cached.expiresAt > Date.now()) result = cached
+  else {
+    let pending = pendingSkins.get(key)
+    if (!pending) {
+      pending = fetchSkin(env, playerUuid, playerName).then(value => {
+        if (!(value instanceof Response)) {
+          if (skins.size >= 256) skins.delete(skins.keys().next().value!)
+          skins.set(key, value)
+        }
+        return value
+      }).catch(() => apiError(503, 'SKIN_FETCH_FAILED', 'Skin service is temporarily unavailable', true))
+        .finally(() => pendingSkins.delete(key))
+      pendingSkins.set(key, pending)
+    }
+    result = await pending
+  }
+  if (result instanceof Response) return result.clone()
+  if (request.headers.get('if-none-match') === result.etag) {
+    return new Response(null, { status: 304, headers: avatarHeaders(result.etag) })
+  }
+  const body = new ArrayBuffer(result.png.byteLength)
+  new Uint8Array(body).set(result.png)
+  return new Response(body, { status: 200, headers: avatarHeaders(result.etag) })
+}
+
+async function fetchSkin(env: Env, playerUuid: string, playerName: string): Promise<CachedSkin | Response> {
   const bridge = env.BRIDGE_COORDINATOR.getByName(env.CCT_NETWORK_ID)
   const response = await bridge.fetch(new Request('https://bridge.internal/rpc', {
     method: 'POST',
@@ -59,12 +91,7 @@ export async function avatarForPlayer(
     return apiError(502, 'SKIN_RESPONSE_INVALID', 'Skin service returned an invalid response', true)
   }
   const etag = `"${envelope.data.textureHash}"`
-  if (request.headers.get('if-none-match') === etag) {
-    return new Response(null, { status: 304, headers: avatarHeaders(etag) })
-  }
-  const body = new ArrayBuffer(png.byteLength)
-  new Uint8Array(body).set(png)
-  return new Response(body, { status: 200, headers: avatarHeaders(etag) })
+  return { png, etag, expiresAt: Date.now() + 300_000 }
 }
 
 function avatarHeaders(etag: string): Headers {

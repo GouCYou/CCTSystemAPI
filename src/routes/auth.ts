@@ -116,6 +116,7 @@ export async function me(request: Request, env: Env): Promise<Response> {
   }
   const data = await readSession(request, env)
   if (data === undefined) {
+    if (new URL(request.url).searchParams.get('optional') === '1') return jsonResponse({ ok:true, data:{ authenticated:false } })
     return apiError(401, 'SESSION_INVALID', 'Session is invalid')
   }
   const liveProfile = await readLiveProfile(env, data.playerUuid)
@@ -125,7 +126,8 @@ export async function me(request: Request, env: Env): Promise<Response> {
       authenticated: true,
       playerUuid: data.playerUuid,
       displayName: data.displayName,
-      online: liveProfile?.online ?? false,
+      online: liveProfile?.online ?? null,
+      profileAvailable: liveProfile !== undefined,
       primaryGroup: liveProfile?.primaryGroup ?? 'default',
       title: liveProfile?.title ?? null,
       expiresAt: new Date(data.expiresAt).toISOString(),

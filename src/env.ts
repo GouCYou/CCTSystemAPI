@@ -5,6 +5,7 @@ export interface Env {
   AUTH_RATE_LIMIT: DurableObjectNamespace
   CCT_NETWORK_ID: string
   NODE_KEYS_JSON: string
+  PARKOUR_NODE_KEY?: string
   AUTH_RATE_LIMIT_SALT: string
   CCT_ALLOWED_ORIGINS: string
   EXCHANGE_SOURCE_SERVERS_JSON: string

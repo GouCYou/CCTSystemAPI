@@ -93,6 +93,26 @@ function validateMenuCatalog(value: Record<string, unknown>): Record<string, unk
     : catalog as Record<string, unknown>[]
 }
 
+export async function applyMembershipDiscount(request: Request, env: Env): Promise<Response> {
+  if (request.method !== 'POST') return apiError(405,'METHOD_NOT_ALLOWED','Method not allowed')
+  if (request.headers.get('x-cct-csrf') !== '1') return apiError(403,'CSRF_REQUIRED','CSRF header is required')
+  const playerUuid=PUBLIC_PRICING_PLAYER_UUID
+  const limited=await consumeMutationLimit(request,env,`preview:${request.headers.get('CF-Connecting-IP') ?? 'unknown'}`,'membership-discount',30)
+  if (limited !== undefined) return limited
+  const input: unknown = await request.json().catch(() => null)
+  if (!isRecord(input) || typeof input.discountCode !== 'string' || input.discountCode.length > 32
+    || input.discountCode !== '' && !/^[\p{L}\p{N}_-]{1,32}$/u.test(input.discountCode.normalize('NFC'))) return apiError(200,'DISCOUNT_CODE_UNAVAILABLE','Invalid discount code')
+  const response=await minecraftRpc(env,{capability:'membership.read',operation:'membership.menu',serverId:env.MEMBERSHIP_SERVER_ID,
+    payload:{playerUuid,discountCode:input.discountCode.normalize('NFC').toUpperCase() || null},timeoutMs:8000})
+  const envelope=await readEnvelope(response)
+  if(!response.ok) return membershipBusinessResult(envelope,response.status)
+  if(input.discountCode && (!isRecord(envelope.data) || envelope.data.discountCodeHandled !== true)) return apiError(503,'DISCOUNT_CODE_UNAVAILABLE','Discount code service unavailable',true)
+  const items=isRecord(envelope.data) ? validateMenuCatalog(envelope.data) : undefined
+  if(!items) return invalidMinecraftResponse()
+  // Player pricing carries no discount-code expiry, quota or usage metadata.
+  return jsonResponse({ok:true,data:items.map(item=>({...item,promotionEndsAt:null}))})
+}
+
 export async function membershipQuote(request: Request, env: Env): Promise<Response> {
   if (request.method !== 'POST') {
     return apiError(405, 'METHOD_NOT_ALLOWED', 'Method not allowed')
@@ -119,7 +139,7 @@ export async function membershipQuote(request: Request, env: Env): Promise<Respo
     payload: { playerUuid: session.playerUuid, ...input },
     timeoutMs: 5_000,
   })
-  return filterObject(response, validateQuote)
+  return filterObject(response, value => { const quote=validateQuote(value); return quote && input.discountCode ? { ...quote, promotionEndsAt:null } : quote })
 }
 
 export async function purchaseMembership(request: Request, env: Env): Promise<Response> {
@@ -158,7 +178,7 @@ export async function purchaseMembership(request: Request, env: Env): Promise<Re
 
 export async function readMembershipInput(
   request: Request,
-): Promise<{ tierKey: string; months: number; upgradeMode: string } | undefined> {
+): Promise<{ tierKey: string; months: number; upgradeMode: string; discountCode?: string } | undefined> {
   try {
     const text = await request.text()
     if (text.length === 0 || text.length > 2_048) {
@@ -173,7 +193,9 @@ export async function readMembershipInput(
       || !UPGRADE_MODES.has(value.upgradeMode.toUpperCase())) {
       return undefined
     }
+    if (value.discountCode !== undefined && value.discountCode !== null && (typeof value.discountCode !== 'string' || !/^[\p{L}\p{N}_-]{1,32}$/u.test(value.discountCode.normalize('NFC')))) return undefined
     return {
+      ...(typeof value.discountCode === 'string' ? { discountCode: value.discountCode.normalize('NFC').toUpperCase() } : {}),
       tierKey: value.tierKey,
       months: value.months as number,
       upgradeMode: value.upgradeMode.toUpperCase(),
@@ -198,7 +220,7 @@ async function filterObject(
 ): Promise<Response> {
   const envelope = await readEnvelope(response)
   if (!response.ok) {
-    return jsonResponse(envelope, { status: response.status })
+    return membershipBusinessResult(envelope,response.status)
   }
   const filtered = isRecord(envelope.data) ? validator(envelope.data) : undefined
   return filtered === undefined
@@ -341,4 +363,10 @@ function nullableString(value: unknown): boolean {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function membershipBusinessResult(envelope: Record<string, unknown>, status: number): Response {
+  const code=isRecord(envelope.error) ? envelope.error.code : undefined
+  const expected=new Set(['MEMBERSHIP_BINDING_REQUIRED','MEMBERSHIP_PURCHASE_FORBIDDEN','MEMBERSHIP_DOWNGRADE_FORBIDDEN','MEMBERSHIP_DURATION_LIMIT','MEMBERSHIP_UPGRADE_MODE_REQUIRED','DISCOUNT_CODE_UNAVAILABLE','DISCOUNT_CODE_LIMIT_REACHED'])
+  return jsonResponse(envelope,{status:typeof code==='string' && expected.has(code) && status>=400 && status<500 ? 200 : status})
 }

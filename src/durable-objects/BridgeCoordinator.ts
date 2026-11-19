@@ -2,7 +2,8 @@ import type { Env } from '../env'
 import { apiError, jsonResponse } from '../http/json'
 
 const PROTOCOL_VERSION = 1
-const MAX_MESSAGE_BYTES = 128 * 1024
+// Allow a bounded filter document response, including JSON escaping.
+const MAX_MESSAGE_BYTES = 2 * 1024 * 1024
 
 interface SocketAttachment {
   networkId: string
@@ -43,7 +44,6 @@ export class BridgeCoordinator {
     private readonly state: DurableObjectState,
     private readonly env: Env,
   ) {
-    void this.env
     this.state.storage.sql.exec(`
       CREATE TABLE IF NOT EXISTS used_nonces (
         node_id TEXT NOT NULL,
@@ -110,7 +110,15 @@ export class BridgeCoordinator {
     }
     if (value.kind === 'call') {
       webSocket.serializeAttachment(attachment)
-      void this.handleNodeCall(webSocket, attachment, value)
+      void this.handleNodeCall(webSocket, attachment, value).catch((error: unknown) => {
+        console.error('Bridge forwarding failed', {
+          sourceNode: attachment.nodeId, requestId: value.requestId, operation: value.operation,
+          message: error instanceof Error ? error.message : 'Unexpected forwarding failure',
+        })
+        this.sendNodeCallError(webSocket, attachment, typeof value.requestId === 'string' ? value.requestId : '', {
+          code: 'BRIDGE_REQUEST_FAILED', message: 'Minecraft request could not be forwarded', retryable: true,
+        })
+      })
       return
     }
     webSocket.close(1003, 'unsupported frame')
@@ -261,13 +269,22 @@ export class BridgeCoordinator {
       return
     }
 
-    const timeoutMs = Math.min(Math.max(deadlineAt - Date.now(), 500), 15_000)
+    // Leave time for the return hop instead of expiring at the caller's deadline.
+    const timeoutMs = Math.min(deadlineAt - Date.now() - 250, 15_000)
+    if (timeoutMs <= 0) {
+      this.sendNodeCallError(sourceSocket, source, requestId, {
+        code: 'REQUEST_EXPIRED', message: 'Insufficient time remaining to forward request', retryable: true,
+      })
+      return
+    }
     const forwarded = await this.rpc(new Request('https://bridge.internal/rpc', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         capability,
         operation,
+        // Game-originated membership calls use the same authority as the website.
+        serverId: capability.startsWith('membership.') ? this.env.MEMBERSHIP_SERVER_ID : undefined,
         payload: frame.payload ?? null,
         idempotencyKey: idempotencyKey ?? undefined,
         timeoutMs,
@@ -332,7 +349,8 @@ export class BridgeCoordinator {
         roles: attachment.roles,
         capabilities: attachment.capabilities,
         pluginVersion: attachment.pluginVersion ?? null,
-        ready: attachment.ready && webSocket.readyState === WebSocket.OPEN,
+        ready: attachment.ready && webSocket.readyState === WebSocket.OPEN
+          && Date.now() - attachment.lastSeenAt <= 65_000,
         lastSeenAt: new Date(attachment.lastSeenAt).toISOString(),
       }
     })
@@ -356,13 +374,17 @@ export class BridgeCoordinator {
     }
     const { webSocket, attachment } = selected
     const requestId = crypto.randomUUID()
-    const timeoutMs = Math.min(Math.max(call.timeoutMs ?? 8_000, 500), 15_000)
+    if (call.timeoutMs !== undefined && (!Number.isFinite(call.timeoutMs) || call.timeoutMs <= 0)) {
+      return apiError(400, 'REQUEST_INVALID', 'Invalid RPC timeout')
+    }
+    const timeoutMs = Math.min(Math.max(call.timeoutMs ?? 8_000, 1), 15_000)
     attachment.nextOutboundSequence += 1
     webSocket.serializeAttachment(attachment)
     const response = new Promise<Response>(resolve => {
       const timer = setTimeout(() => {
         this.pending.delete(requestId)
-        resolve(apiError(504, 'BRIDGE_TIMEOUT', 'Minecraft service timed out', true))
+        console.info('Bridge request timed out', { nodeId: attachment.nodeId, operation: call.operation, requestId })
+        resolve(apiError(504, 'BRIDGE_TIMEOUT', `Minecraft service timed out (node=${attachment.nodeId}, operation=${call.operation}, request=${requestId})`, true))
       }, timeoutMs)
       this.pending.set(requestId, { nodeId: attachment.nodeId, resolve, timer })
     })
@@ -397,6 +419,7 @@ export class BridgeCoordinator {
       const attachment = this.attachment(webSocket)
       if (webSocket.readyState === WebSocket.OPEN
         && attachment.ready
+        && Date.now() - attachment.lastSeenAt <= 65_000
         && (requestedNodeId === undefined || requestedNodeId === attachment.nodeId)
         && (requestedServerId === undefined || requestedServerId === attachment.serverId)
         && attachment.capabilities.includes(capability)) {

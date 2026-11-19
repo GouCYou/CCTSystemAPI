@@ -156,3 +156,28 @@ describe('admin server inventory', () => {
     ] } })
   })
 })
+
+
+describe('chat filter records', () => {
+  it('rejects ordinary players and invalid date ranges', async () => {
+    const ordinary = authenticatedRequest('/api/admin/chat-filter')
+    expect((await adminRoute(ordinary, environment('default'), new URL(ordinary.url))).status).toBe(403)
+    const invalid = authenticatedRequest('/api/admin/chat-filter?from=2026-10-05T00:00:00Z&to=2026-10-01T00:00:00Z')
+    expect((await adminRoute(invalid, environment('owner'), new URL(invalid.url))).status).toBe(400)
+  })
+  it('passes filters to the authorized database node', async () => {
+    const env = environment('mod')
+    const calls: Record<string, unknown>[] = []
+    env.BRIDGE_COORDINATOR = { getByName: () => ({ fetch: async (request: Request) => {
+      const call = await request.json() as Record<string, unknown>
+      calls.push(call)
+      return Response.json({ ok: true, data: call.method === 'admin.chat-filter.list'
+        ? { items: [], page: 1, pageSize: 10, total: 0, totalPages: 1 } : { primaryGroup: 'mod' } })
+    } }) } as unknown as Env['BRIDGE_COORDINATOR']
+    const req = authenticatedRequest('/api/admin/chat-filter?server=survival&word=test&query=Player')
+    expect((await adminRoute(req, env, new URL(req.url))).status).toBe(200)
+    expect(JSON.stringify(calls)).toContain('admin.chat-filter.list')
+    expect(JSON.stringify(calls)).toContain('survival')
+    expect(JSON.stringify(calls)).toContain('Player')
+  })
+})

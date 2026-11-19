@@ -7,7 +7,7 @@ import { apiError, jsonResponse } from './http/json'
 import { login, logout, me } from './routes/auth'
 import { avatar } from './routes/avatar'
 import { exchangeQuote, exchangeQuotes, executeExchange, points, pointsHistory } from './routes/economy'
-import {
+import { applyMembershipDiscount,
   membershipCatalog,
   membershipQuote,
   membershipSummary,
@@ -111,6 +111,7 @@ async function routeApi(request: Request, env: Env, url: URL): Promise<Response>
   if (url.pathname === '/api/catalog/memberships') {
     return membershipCatalog(request, env)
   }
+  if (url.pathname === '/api/membership/discount') return applyMembershipDiscount(request,env)
   if (url.pathname === '/api/membership/quote') {
     return membershipQuote(request, env)
   }

@@ -1,4 +1,5 @@
 import { apiError, jsonResponse } from '../http/json'
+import { handleGameDiscordSession } from '../routes/discord-game'
 
 interface StoredSession {
   playerUuid: string
@@ -11,6 +12,9 @@ export class SessionObject {
   constructor(private readonly state: DurableObjectState) {}
 
   async fetch(request: Request): Promise<Response> {
+    if (new URL(request.url).pathname.startsWith('/discord-game/')) {
+      return handleGameDiscordSession(this.state.storage, request)
+    }
     if (request.method === 'PUT') {
       return this.create(request)
     }

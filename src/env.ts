@@ -14,6 +14,7 @@ export interface Env {
   REDEEM_SERVER_ID: string
   SKIN_SERVER_ID: string
   PROFILE_SERVER_ID: string
+  DISCORD_GAME_NODE_ID?: string
   POINTS_SERVER_ID: string
   SESSION_TTL_SECONDS?: string
   DISCORD_CLIENT_ID: string

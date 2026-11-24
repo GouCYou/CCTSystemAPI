@@ -25,6 +25,7 @@
     "REDEEM_SERVER_ID": "lobby",
     "SKIN_SERVER_ID": "proxy",
     "PROFILE_SERVER_ID": "proxy",
+    "DISCORD_GAME_NODE_ID": "velocity-1",
     "POINTS_SERVER_ID": "lobby",
     "SESSION_TTL_SECONDS": "604800",
     "DISCORD_CLIENT_ID": "1540972787538333748",

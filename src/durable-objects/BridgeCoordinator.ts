@@ -1,5 +1,6 @@
 import type { Env } from '../env'
 import { apiError, jsonResponse } from '../http/json'
+import { gameDiscordCommand } from '../routes/discord-game'
 
 const PROTOCOL_VERSION = 1
 // Allow a bounded filter document response, including JSON escaping.
@@ -68,7 +69,7 @@ export class BridgeCoordinator {
     return apiError(404, 'NOT_FOUND', 'Not found')
   }
 
-  webSocketMessage(webSocket: WebSocket, message: string | ArrayBuffer): void {
+  async webSocketMessage(webSocket: WebSocket, message: string | ArrayBuffer): Promise<void> {
     if (typeof message !== 'string' || message.length > MAX_MESSAGE_BYTES) {
       webSocket.close(1009, 'message too large')
       return
@@ -110,7 +111,7 @@ export class BridgeCoordinator {
     }
     if (value.kind === 'call') {
       webSocket.serializeAttachment(attachment)
-      void this.handleNodeCall(webSocket, attachment, value).catch((error: unknown) => {
+      await this.handleNodeCall(webSocket, attachment, value).catch((error: unknown) => {
         console.error('Bridge forwarding failed', {
           sourceNode: attachment.nodeId, requestId: value.requestId, operation: value.operation,
           message: error instanceof Error ? error.message : 'Unexpected forwarding failure',
@@ -251,7 +252,11 @@ export class BridgeCoordinator {
       })
       return
     }
-    if (!isAllowedNodeCall(capability, operation)) {
+    const gameDiscord = capability === 'account.security.mutate'
+      && (operation === 'discord.game.start' || operation === 'discord.game.confirm' || operation === 'discord.game.unbind')
+    if (gameDiscord ? !source.ready || source.nodeId !== this.env.DISCORD_GAME_NODE_ID || source.platform !== 'velocity'
+        || source.serverId !== this.env.PROFILE_SERVER_ID || !source.roles.includes('proxy')
+      : !isAllowedNodeCall(capability, operation)) {
       this.sendNodeCallError(sourceSocket, source, requestId, {
         code: 'CAPABILITY_NOT_ALLOWED',
         message: 'Node RPC operation is not allowed',
@@ -277,19 +282,23 @@ export class BridgeCoordinator {
       })
       return
     }
-    const forwarded = await this.rpc(new Request('https://bridge.internal/rpc', {
+    const forward = (call: RpcCall) => this.rpc(new Request('https://bridge.internal/rpc', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        capability,
-        operation,
-        // Game-originated membership calls use the same authority as the website.
-        serverId: capability.startsWith('membership.') ? this.env.MEMBERSHIP_SERVER_ID : undefined,
-        payload: frame.payload ?? null,
-        idempotencyKey: idempotencyKey ?? undefined,
-        timeoutMs,
-      }),
+      body: JSON.stringify(call),
     }))
+    const forwarded = gameDiscord
+      ? await gameDiscordCommand(this.env, operation, frame.payload, payload => forward({
+        capability, operation: operation === 'discord.game.unbind' ? 'account.discord.unbind' : 'account.discord.bind',
+        serverId: this.env.AUTH_SERVER_ID, payload, timeoutMs,
+      }))
+      : await forward({
+        capability, operation,
+        // Game-originated membership calls use the same authority as the website.
+        ...(capability.startsWith('membership.') ? { serverId: this.env.MEMBERSHIP_SERVER_ID } : {}),
+        ...(typeof idempotencyKey === 'string' ? { idempotencyKey } : {}),
+        payload: frame.payload ?? null, timeoutMs,
+      })
     const body = await forwarded.json().catch(() => ({})) as {
       ok?: boolean
       data?: unknown

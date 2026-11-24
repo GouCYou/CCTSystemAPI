@@ -51,6 +51,40 @@ export async function adminRoute(request: Request, env: Env, url: URL): Promise<
       },
     })
   }
+  if (url.pathname === '/api/admin/mail') {
+    if (request.method === 'GET') return adminRead(env, admin, env.MEMBERSHIP_SERVER_ID, 'admin.mail.list', {
+      page: pageNumber(url, 'page', 0, 1000, 0),
+    })
+    if (request.method === 'POST') {
+      if (!CONSOLE_GROUPS.has(admin.group)) return apiError(403, 'ADMIN_FORBIDDEN', 'Mail requires owner or admin')
+      return mutate(request, env, admin, 'mail', 20, async input => {
+        if (!isRecord(input) || !['SEND', 'EDIT'].includes(String(input.action))
+          || typeof input.id !== 'string' || !PLAYER_UUID.test(input.id) || !isRecord(input.draft)
+          || (input.action === 'SEND' && (typeof input.target !== 'string' || !input.target.trim() || input.target.length > 36))) {
+          return invalidRequest()
+        }
+        const payload = { action: input.action, id: input.id, target: input.target, draft: input.draft,
+          actor: `web:${admin.session.displayName}` }
+        const response = await adminRpc(env, admin, 'admin.mutate', 'admin.mail.mutate', env.MEMBERSHIP_SERVER_ID, payload)
+        await auditResult(env, admin, response, `MAIL_${input.action}`, input.id, { target: input.target })
+        return passthrough(response)
+      })
+    }
+  }
+  if (url.pathname === '/api/admin/lag-compensation') {
+    if (request.method === 'GET') return adminRead(env, admin, env.PROFILE_SERVER_ID, 'admin.lag-compensation.settings', {})
+    if (request.method === 'POST') {
+      if (!CONSOLE_GROUPS.has(admin.group)) return apiError(403, 'ADMIN_FORBIDDEN', 'Compensation requires owner or admin')
+      return mutate(request, env, admin, 'lag-compensation', 10, async input => {
+        if (!isRecord(input) || (input.reset !== true && (typeof input.enabled !== 'boolean'
+          || !Array.isArray(input.rewards) || input.rewards.length > 10))) return invalidRequest()
+        const payload = input.reset === true ? { reset: true } : { enabled: input.enabled, rewards: input.rewards }
+        const response = await adminRpc(env, admin, 'admin.mutate', 'admin.lag-compensation.save', env.PROFILE_SERVER_ID, payload)
+        await auditResult(env, admin, response, 'LAG_COMPENSATION_SAVE', 'network', payload)
+        return passthrough(response)
+      })
+    }
+  }
   if (url.pathname === '/api/admin/announcements') {
     if (request.method === 'GET') return announcementStore(env).fetch('https://content.internal/')
     if (request.method === 'POST') return mutate(request, env, admin, 'announcements', 20, async input => {

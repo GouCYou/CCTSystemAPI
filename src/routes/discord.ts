@@ -3,6 +3,7 @@ import { apiError, jsonResponse } from '../http/json'
 import { readSessionToken } from '../http/session-cookie'
 import { consumeMutationLimit } from '../security/mutation-rate-limit'
 import { readSession } from '../security/session'
+import { claimGameDiscordState, discordAuthorizationUrl, gameDiscordPage, readyGameDiscord } from './discord-game'
 
 const DISCORD_API = 'https://discord.com/api/v10'
 const STATE_TTL_SECONDS = 600
@@ -19,32 +20,28 @@ export async function discordAuthorize(request: Request, env: Env): Promise<Resp
   if (limited !== undefined) return limited
 
   const state = await createState(sessionToken, env.DISCORD_CLIENT_SECRET)
-  const url = new URL('https://discord.com/oauth2/authorize')
-  url.search = new URLSearchParams({
-    response_type: 'code',
-    client_id: env.DISCORD_CLIENT_ID,
-    scope: 'identify',
-    state,
-    redirect_uri: env.DISCORD_REDIRECT_URI,
-    prompt: 'consent',
-  }).toString()
-  return Response.redirect(url.toString(), 302)
+  return Response.redirect(discordAuthorizationUrl(env, state), 302)
 }
 
 export async function discordCallback(request: Request, env: Env, url: URL): Promise<Response> {
   if (request.method !== 'GET') return apiError(405, 'METHOD_NOT_ALLOWED', 'Method not allowed')
   if (!discordConfigured(env)) return redirectResult(env, 'unavailable')
-  const session = await readSession(request, env)
-  const sessionToken = readSessionToken(request)
   const code = url.searchParams.get('code')
   const state = url.searchParams.get('state')
-  if (session === undefined || sessionToken === undefined) return redirectResult(env, 'session')
-  if (code === null || code.length < 1 || code.length > 512
-    || state === null || !(await verifyState(state, sessionToken, env.DISCORD_CLIENT_SECRET))) {
-    return redirectResult(env, 'state')
-  }
-
+  const game = state?.startsWith('game.') === true
+  const fail = (reason: string) => game ? gameDiscordPage() : redirectResult(env, reason)
+  if (!code || code.length > 512 || state === null) return fail('state')
   try {
+    const attempt = game ? await claimGameDiscordState(env, state) : undefined
+    let playerUuid = attempt?.playerUuid
+    if (game && !attempt) return fail('state')
+    if (!game) {
+      const session = await readSession(request, env)
+      const sessionToken = readSessionToken(request)
+      if (!session || !sessionToken) return fail('session')
+      if (!(await verifyState(state, sessionToken, env.DISCORD_CLIENT_SECRET))) return fail('state')
+      playerUuid = session.playerUuid
+    }
     const tokenResponse = await fetch(`${DISCORD_API}/oauth2/token`, {
       method: 'POST',
       headers: { 'content-type': 'application/x-www-form-urlencoded' },
@@ -59,7 +56,7 @@ export async function discordCallback(request: Request, env: Env, url: URL): Pro
     })
     const token: unknown = await tokenResponse.json()
     if (!tokenResponse.ok || !isRecord(token) || typeof token.access_token !== 'string') {
-      return redirectResult(env, 'token')
+      return fail('token')
     }
     const userResponse = await fetch(`${DISCORD_API}/users/@me`, {
       headers: { authorization: `Bearer ${token.access_token}` },
@@ -69,16 +66,18 @@ export async function discordCallback(request: Request, env: Env, url: URL): Pro
     if (!userResponse.ok || !isRecord(user)
       || typeof user.id !== 'string' || !/^\d{5,32}$/.test(user.id)
       || typeof user.username !== 'string') {
-      return redirectResult(env, 'profile')
+      return fail('profile')
     }
     const displayName = typeof user.global_name === 'string' && user.global_name.trim().length > 0
       ? user.global_name.trim()
       : user.username.trim()
+    if (!displayName) return fail('profile')
+    if (attempt) return await readyGameDiscord(env, attempt, user.id, displayName.slice(0, 80))
     const response = await minecraftRpc(env, {
       capability: 'account.security.mutate',
       operation: 'account.discord.bind',
       payload: {
-        playerUuid: session.playerUuid,
+        playerUuid,
         discordUserId: user.id,
         discordUsername: displayName.slice(0, 80),
       },
@@ -92,7 +91,7 @@ export async function discordCallback(request: Request, env: Env, url: URL): Pro
     }
     return redirectResult(env, 'bound')
   } catch {
-    return redirectResult(env, 'service')
+    return fail('service')
   }
 }
 
